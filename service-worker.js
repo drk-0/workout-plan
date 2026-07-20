@@ -1,10 +1,13 @@
-const CACHE_NAME = "workout-plan-2-v2";
+const CACHE_NAME = "workout-plan-2-v4";
 const BASE = new URL(".", self.location).href;
 const ASSET_PATHS = [
   "index.html",
   "manifest.webmanifest",
   "css/styles.css",
   "js/app.js",
+  "js/workout-data.js",
+  "js/progress.js",
+  "js/charts.js",
   "js/exercises.js",
   "icons/icon-192.png",
   "icons/icon-512.png",
