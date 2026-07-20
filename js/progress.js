@@ -131,16 +131,29 @@ export function saveBodyMetrics(entries) {
   localStorage.setItem(BODY_METRICS_KEY, JSON.stringify(entries));
 }
 
-export function createBodyMetricEntry({ date, weight, waist, notes, now = new Date() }) {
+export function createBodyMetricEntry({
+  date,
+  weight,
+  waist,
+  bodyFat,
+  notes,
+  source = "manual",
+  id,
+  timestamp,
+  now = new Date()
+}) {
   const weightNum = weight === "" || weight == null ? null : Number(weight);
   const waistNum = waist === "" || waist == null ? null : Number(waist);
+  const bodyFatNum = bodyFat === "" || bodyFat == null ? null : Number(bodyFat);
   return {
-    id: `metric-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    id: id || `metric-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     date: date || localDateKey(now),
-    timestamp: now.toISOString(),
+    timestamp: timestamp || now.toISOString(),
     weight: Number.isFinite(weightNum) ? weightNum : null,
     waist: Number.isFinite(waistNum) ? waistNum : null,
-    notes: notes || ""
+    bodyFat: Number.isFinite(bodyFatNum) ? bodyFatNum : null,
+    notes: notes || "",
+    source
   };
 }
 
@@ -179,14 +192,20 @@ export function getBodyMetricsTimeline(sessions) {
 
 export function getGlucoseLog(sessions) {
   return getCompletedSessions(sessions)
-    .filter((session) => session.wellness?.glucosePre != null || session.wellness?.glucosePost != null)
+    .filter(
+      (session) =>
+        session.readiness?.glucose != null ||
+        session.recovery?.glucose != null ||
+        session.wellness?.glucosePre != null ||
+        session.wellness?.glucosePost != null
+    )
     .map((session) => ({
       id: session.id,
       date: localDateKey(session.endedAt || session.startedAt),
       localTime: new Date(session.endedAt || session.startedAt).toLocaleString(),
       workout: session.workout,
-      glucosePre: session.wellness?.glucosePre ?? null,
-      glucosePost: session.wellness?.glucosePost ?? null
+      glucosePre: session.readiness?.glucose ?? session.wellness?.glucosePre ?? null,
+      glucosePost: session.recovery?.glucose ?? session.wellness?.glucosePost ?? null
     }))
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 }

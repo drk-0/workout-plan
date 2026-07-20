@@ -258,3 +258,22 @@ test("dismissed suggestion suppresses matching dismiss key", () => {
   assert.equal(result.eligible, false);
   assert.match(result.reason, /dismissed/i);
 });
+
+test("per-set sharp pain blocks weight increase eligibility", () => {
+  const session = buildCompletedLiftSession({
+    reps: 15,
+    weight: 20,
+    effort: 7,
+    endedAt: "2026-07-20T12:00:00.000Z"
+  });
+  session.sets = session.sets.map((set) => ({ ...set, painDuringSet: "sharp" }));
+
+  const result = isWeightIncreaseEligible(
+    [session, buildCompletedLiftSession({ endedAt: "2026-07-13T12:00:00.000Z" })],
+    gobletSquat,
+    defaultTarget,
+    { availableWeights: USER_WEIGHTS }
+  );
+  assert.equal(result.eligible, false);
+  assert.match(result.reason, /pain/i);
+});
