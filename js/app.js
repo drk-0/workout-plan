@@ -1,6 +1,11 @@
 import { EXERCISES } from "./exercises.js";
 import { renderBarChart, renderLineChart } from "./charts.js";
 import {
+  evaluateProgression,
+  formatSuggestionTitle,
+  SUGGESTION_TYPES
+} from "./progression.js";
+import {
   addBodyMetric,
   calculateConsistencyStreak,
   countWorkoutsThisWeek,
@@ -26,7 +31,9 @@ import {
   getActiveSession,
   getSetsForLift,
   markSetsSynced,
-  normalizeHistory
+  normalizeHistory,
+  normalizeLiftFeedback,
+  setLiftFeedback
 } from "./workout-data.js";
 
 const SHEETS_URL_KEY = "googleSheetsWebAppUrl";
@@ -105,7 +112,7 @@ function home(){
       <a class="btn" href="#/workout/A">Workout A<br><small>Push + legs</small></a>
       <a class="btn" href="#/workout/B">Workout B<br><small>Pull + legs</small></a>
     </div>
-    <div class="panel"><h2>Today's Rule</h2><p>Train clean. Stop with 1–3 good reps left. When you hit the top of the rep range with good form, move up in weight.</p></div>
+    <div class="panel"><h2>Today's Rule</h2><p>Train clean. Stop with 1–3 good reps left. The app suggests conservative progression — you decide whether to follow it.</p></div>
     <div class="panel"><h2>Settings</h2><a class="secondary-btn" href="#/settings">Google Sheets Setup</a></div>
   </section>`;
 }
@@ -159,6 +166,50 @@ function card(e, session){
   </a>`;
 }
 
+function renderProgressionCard(exercise, sessions) {
+  const suggestion = evaluateProgression(sessions, exercise);
+  const confirmButtons =
+    suggestion.type === SUGGESTION_TYPES.INCREASE_WEIGHT && suggestion.suggestedWeight
+      ? `<div class="progression-actions">
+          <button class="btn progression-apply" type="button" data-weight="${suggestion.suggestedWeight}">Use ${suggestion.suggestedWeight} lb</button>
+          <button class="secondary-btn progression-dismiss" type="button">Keep ${suggestion.currentWeight} lb</button>
+        </div>
+        <p class="progression-note">Weight changes only apply when you confirm. Nothing is saved automatically.</p>`
+      : "";
+
+  return `<div class="progression-card" data-suggestion-type="${suggestion.type}">
+    <h2>${formatSuggestionTitle(suggestion)}</h2>
+    <p class="progression-message">${suggestion.message}</p>
+    <p class="progression-suggestion"><strong>Suggestion:</strong> ${suggestion.suggestion}</p>
+    ${confirmButtons}
+  </div>`;
+}
+
+function renderEffortControls(session, slug) {
+  const feedback = session.liftFeedback?.[slug] || {};
+  const effort = feedback.effort ?? "";
+  const painChecked = feedback.pain ? " checked" : "";
+  const effortOptions = Array.from({ length: 10 }, (_, index) => {
+    const value = index + 1;
+    const selected = effort === value ? " selected" : "";
+    return `<option value="${value}"${selected}>${value}/10</option>`;
+  }).join("");
+
+  return `<div class="effort-panel">
+    <h2>How did it feel?</h2>
+    <p class="panel-note">Optional. Used for conservative progression suggestions — not medical advice.</p>
+    <label class="field-label" for="lift-effort">Effort (1 = easy, 10 = max)</label>
+    <select id="lift-effort" class="dash-select effort-select">
+      <option value="">Not logged</option>
+      ${effortOptions}
+    </select>
+    <label class="pain-check">
+      <input id="lift-pain" type="checkbox"${painChecked}>
+      <span>Pain or sharp discomfort during this exercise</span>
+    </label>
+  </div>`;
+}
+
 function lift(slug){
   const e = exercise(slug);
   let sessions = persistMigratedSessions();
@@ -179,12 +230,15 @@ function lift(slug){
   const prev = workoutExercises[(idx-1+workoutExercises.length)%workoutExercises.length].slug;
   const next = workoutExercises[(idx+1)%workoutExercises.length].slug;
   const cues = e.cues.map(c=>`<li>${c}</li>`).join("");
+  const progressionCard = renderProgressionCard(e, sessions);
+  const effortControls = renderEffortControls(session, slug);
   return `<section>
     <div class="topbar"><a href="#/workout/${e.workout}">← Workout ${e.workout}</a><span>${e.name}</span></div>
     <div class="art"><img src="${img(e.slug)}" alt="${e.name}"></div>
     <h1>${e.name}</h1>
     <p class="lede">${e.subtitle}</p>
     <div class="sets">${e.sets}</div>
+    ${progressionCard}
     ${savedSummary}
     <div class="card"><h2>How to do it</h2><p>${e.instructions}</p></div>
     <div class="card"><h2>Form cues</h2><ul>${cues}</ul></div>
@@ -206,6 +260,7 @@ function lift(slug){
       <textarea class="notes" placeholder="Notes">${lastSet?.notes || ""}</textarea>
       <button class="set-complete">Save Set + Start Timer</button>
     </div>
+    ${effortControls}
     <a class="video" href="${e.video}" target="_blank" rel="noopener noreferrer">Open video in new tab</a>
     <div class="action-grid"><a class="secondary-btn" href="#/lift/${prev}">← Previous</a><a class="secondary-btn lift-next" href="#/lift/${next}" data-lift="${e.slug}">Next →</a></div>
   </section>`;
@@ -397,6 +452,7 @@ function bindPage(){
     const sessionId = tool?.dataset.session;
     if(!liftSlug || !sessionId) return;
     let sessions = loadSessions();
+    sessions = saveLiftFeedbackFromForm(sessions, sessionId, liftSlug);
     sessions = completeLiftInSession(sessions, sessionId, liftSlug);
     saveSessions(sessions);
   });
@@ -475,6 +531,44 @@ function bindDashboard(){
   }
 }
 
+function saveLiftFeedbackFromForm(sessions, sessionId, liftSlug) {
+  const feedback = normalizeLiftFeedback({
+    effort: qs("#lift-effort")?.value,
+    pain: qs("#lift-pain")?.checked
+  });
+  if (!feedback) return sessions;
+  return setLiftFeedback(sessions, sessionId, liftSlug, feedback);
+}
+
+function bindProgressionControls(tool) {
+  const apply = qs(".progression-apply");
+  if (apply) {
+    apply.onclick = () => {
+      const weightInput = tool?.querySelector(".weight");
+      if (weightInput) {
+        weightInput.value = apply.dataset.weight || "";
+        weightInput.focus();
+      }
+    };
+  }
+
+  const dismiss = qs(".progression-dismiss");
+  if (dismiss) {
+    dismiss.onclick = () => {
+      const card = qs(".progression-card");
+      if (card) {
+        card.classList.add("progression-dismissed");
+        const note = document.createElement("p");
+        note.className = "progression-note";
+        note.textContent = "Keeping your current weight. You can revisit this suggestion next time.";
+        card.appendChild(note);
+        dismiss.remove();
+        apply?.remove();
+      }
+    };
+  }
+}
+
 function bindTool(tool){
   const liftSlug = tool.dataset.lift, e = exercise(liftSlug), rest = +tool.dataset.rest;
   const sessionId = tool.dataset.session;
@@ -504,10 +598,12 @@ function bindTool(tool){
     });
     let sessions = loadSessions();
     sessions = addSetToSession(sessions, sessionId, entry);
+    sessions = saveLiftFeedbackFromForm(sessions, sessionId, liftSlug);
     saveSessions(sessions);
     reps = 0; render();
     remaining = rest; start();
   };
+  bindProgressionControls(tool);
   render();
 }
 

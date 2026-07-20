@@ -171,6 +171,37 @@ export function getSetsForLift(session, liftSlug) {
   return (session?.sets || []).filter((set) => set.lift === liftSlug);
 }
 
+export function normalizeLiftFeedback(raw) {
+  if (!raw || typeof raw !== "object") return undefined;
+
+  const effort = raw.effort === "" || raw.effort == null ? null : Number(raw.effort);
+  const out = {};
+
+  if (Number.isFinite(effort)) out.effort = effort;
+  if ("pain" in raw) out.pain = Boolean(raw.pain);
+
+  return Object.keys(out).length ? out : undefined;
+}
+
+export function setLiftFeedback(sessions, sessionId, liftSlug, feedback) {
+  const normalized = normalizeLiftFeedback(feedback);
+  if (!normalized) return sessions;
+
+  return sessions.map((session) => {
+    if (session.id !== sessionId) return session;
+    return {
+      ...session,
+      liftFeedback: {
+        ...(session.liftFeedback || {}),
+        [liftSlug]: {
+          ...(session.liftFeedback?.[liftSlug] || {}),
+          ...normalized
+        }
+      }
+    };
+  });
+}
+
 export function calculateMetrics(sessions) {
   const flat = flattenSets(sessions);
   const byLift = {};

@@ -6,6 +6,7 @@ export const EXERCISES = [
     "subtitle": "Legs + core",
     "sets": "3 \u00d7 12\u201315",
     "rest": 90,
+    "progression": { "type": "reps", "sets": 3, "repMin": 12, "repMax": 15, "usesDumbbells": true },
     "instructions": "Hold one dumbbell vertically at your chest. Squat down until your thighs are at least near parallel, then drive through your heels to stand back up.",
     "cues": [
       "Keep chest tall",
@@ -22,6 +23,7 @@ export const EXERCISES = [
     "subtitle": "Chest + triceps",
     "sets": "3 \u00d7 10\u201315",
     "rest": 75,
+    "progression": { "type": "reps", "sets": 3, "repMin": 10, "repMax": 15, "usesDumbbells": true },
     "instructions": "Lie on the floor with knees bent and dumbbells at chest level. Press until arms are straight, then lower until upper arms lightly touch the floor.",
     "cues": [
       "Wrists stacked over elbows",
@@ -38,6 +40,7 @@ export const EXERCISES = [
     "subtitle": "Shoulders + triceps",
     "sets": "3 \u00d7 10\u201312",
     "rest": 75,
+    "progression": { "type": "reps", "sets": 3, "repMin": 10, "repMax": 12, "usesDumbbells": true },
     "instructions": "Start with dumbbells at shoulder height. Brace your core and press overhead until your arms are extended. Lower with control.",
     "cues": [
       "Ribs down",
@@ -54,6 +57,7 @@ export const EXERCISES = [
     "subtitle": "Legs + balance",
     "sets": "3 \u00d7 10/leg",
     "rest": 90,
+    "progression": { "type": "reps_per_side", "sets": 3, "repMin": 8, "repMax": 10, "usesDumbbells": true },
     "instructions": "Step one foot back, lower under control, then push through your front heel to stand up. Start bodyweight if needed.",
     "cues": [
       "Long step back",
@@ -70,6 +74,7 @@ export const EXERCISES = [
     "subtitle": "Grip + core",
     "sets": "3 \u00d7 30\u201345 sec",
     "rest": 60,
+    "progression": { "type": "time", "sets": 3, "usesDumbbells": true },
     "instructions": "Hold a dumbbell in each hand and walk tall. Keep your shoulders down, core tight, and steps steady.",
     "cues": [
       "Tall posture",
@@ -86,6 +91,7 @@ export const EXERCISES = [
     "subtitle": "Back + biceps",
     "sets": "3 \u00d7 12\u201315/arm",
     "rest": 75,
+    "progression": { "type": "reps_per_side", "sets": 3, "repMin": 12, "repMax": 15, "usesDumbbells": true },
     "instructions": "Place one hand on a chair or couch. Keep your back flat and row the dumbbell toward your hip.",
     "cues": [
       "Pull toward hip",
@@ -102,6 +108,7 @@ export const EXERCISES = [
     "subtitle": "Upper back",
     "sets": "3 \u00d7 12\u201315",
     "rest": 75,
+    "progression": { "type": "reps", "sets": 3, "repMin": 12, "repMax": 15, "usesDumbbells": true },
     "instructions": "Lie chest-down on a sturdy inclined surface. Row dumbbells up toward your lower chest or ribs.",
     "cues": [
       "Chest stays supported",
@@ -118,6 +125,7 @@ export const EXERCISES = [
     "subtitle": "Hamstrings + glutes",
     "sets": "3 \u00d7 15",
     "rest": 90,
+    "progression": { "type": "reps", "sets": 3, "repMin": 12, "repMax": 15, "usesDumbbells": true },
     "instructions": "Hold dumbbells in front of your thighs. Hinge at the hips, lower the weights down your legs, then stand by squeezing glutes.",
     "cues": [
       "Hips back",
@@ -134,6 +142,7 @@ export const EXERCISES = [
     "subtitle": "Biceps + forearms",
     "sets": "3 \u00d7 12\u201315",
     "rest": 60,
+    "progression": { "type": "reps", "sets": 3, "repMin": 12, "repMax": 15, "usesDumbbells": true },
     "instructions": "Hold dumbbells with palms facing each other. Curl without swinging, then lower slowly.",
     "cues": [
       "Elbows stay near sides",
@@ -150,6 +159,7 @@ export const EXERCISES = [
     "subtitle": "Triceps",
     "sets": "3 \u00d7 12\u201315",
     "rest": 60,
+    "progression": { "type": "reps", "sets": 3, "repMin": 12, "repMax": 15, "usesDumbbells": true },
     "instructions": "Hold one dumbbell overhead with both hands. Lower behind your head by bending your elbows, then extend back up.",
     "cues": [
       "Elbows mostly forward",
