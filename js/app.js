@@ -1,10 +1,28 @@
 import { EXERCISES } from "./exercises.js";
 import { renderBarChart, renderLineChart } from "./charts.js";
 import {
-  evaluateProgression,
+  buildEvidence,
+  buildProgressionSuggestion,
   formatSuggestionTitle,
+  getLiftFeedback,
+  getPainLevel,
+  getSessionsWithLift,
   SUGGESTION_TYPES
 } from "./progression.js";
+import {
+  acceptSuggestion,
+  dismissSuggestion,
+  evaluateAndQueueSuggestion,
+  formatSourceLabel,
+  formatTargetLabel,
+  getExerciseTarget,
+  loadProgressionState,
+  migrateProgressionStorage,
+  modifySuggestionTarget,
+  parseDumbbellWeightsInput,
+  saveProgressionState,
+  SUGGESTION_STATUS
+} from "./progression-storage.js";
 import {
   addBodyMetric,
   calculateConsistencyStreak,
@@ -58,8 +76,11 @@ function persistMigratedSessions(){
   try{parsed = JSON.parse(raw)}catch{parsed = []}
   const normalized = normalizeHistory(parsed);
   if(JSON.stringify(parsed) !== JSON.stringify(normalized)) saveSessions(normalized);
+  migrateProgressionStorage(normalized);
   return normalized;
 }
+function loadProgression(){return loadProgressionState(persistMigratedSessions())}
+function saveProgression(state){saveProgressionState(state)}
 function clearAllTimers(){
   Object.keys(timerIntervals).forEach((key)=>{
     clearInterval(timerIntervals[key]);
@@ -112,8 +133,9 @@ function home(){
       <a class="btn" href="#/workout/A">Workout A<br><small>Push + legs</small></a>
       <a class="btn" href="#/workout/B">Workout B<br><small>Pull + legs</small></a>
     </div>
-    <div class="panel"><h2>Today's Rule</h2><p>Train clean. Stop with 1–3 good reps left. The app suggests conservative progression — you decide whether to follow it.</p></div>
-    <div class="panel"><h2>Settings</h2><a class="secondary-btn" href="#/settings">Google Sheets Setup</a></div>
+    <div class="panel"><h2>Today's Rule</h2><p>Train clean. Stop with 1–3 good reps left. Review progression suggestions on the Dashboard — you decide whether to follow them.</p></div>
+    <div class="panel"><a class="secondary-btn" href="#/dashboard">Open Dashboard</a></div>
+    <div class="panel"><h2>Settings</h2><a class="secondary-btn" href="#/settings">Settings</a></div>
   </section>`;
 }
 
@@ -166,34 +188,43 @@ function card(e, session){
   </a>`;
 }
 
-function renderProgressionCard(exercise, sessions) {
-  const suggestion = evaluateProgression(sessions, exercise);
-  const confirmButtons =
-    suggestion.type === SUGGESTION_TYPES.INCREASE_WEIGHT && suggestion.suggestedWeight
-      ? `<div class="progression-actions">
-          <button class="btn progression-apply" type="button" data-weight="${suggestion.suggestedWeight}">Use ${suggestion.suggestedWeight} lb</button>
-          <button class="secondary-btn progression-dismiss" type="button">Keep ${suggestion.currentWeight} lb</button>
-        </div>
-        <p class="progression-note">Weight changes only apply when you confirm. Nothing is saved automatically.</p>`
+function renderTargetBanner(exercise, sessions, target) {
+  const sourceLabel = formatSourceLabel(target?.source);
+  const targetLabel = formatTargetLabel(target, exercise);
+  const lastCompleted = getSessionsWithLift(sessions, exercise.slug)[0];
+  const lastPain = lastCompleted ? getPainLevel(getLiftFeedback(lastCompleted, exercise.slug)) : null;
+  const safetyNote =
+    lastPain === "sharp"
+      ? `<p class="safety-note">Last time you reported sharp pain — consider reducing load or substituting.</p>`
       : "";
 
-  return `<div class="progression-card" data-suggestion-type="${suggestion.type}">
-    <h2>${formatSuggestionTitle(suggestion)}</h2>
-    <p class="progression-message">${suggestion.message}</p>
-    <p class="progression-suggestion"><strong>Suggestion:</strong> ${suggestion.suggestion}</p>
-    ${confirmButtons}
+  return `<div class="target-banner">
+    <div class="target-banner-row">
+      <strong>Target:</strong> ${targetLabel}
+      <span class="source-badge">${sourceLabel}</span>
+    </div>
+    ${safetyNote}
+    <p class="target-banner-note">Suggestions are reviewed on the Dashboard after you finish this exercise.</p>
   </div>`;
 }
 
 function renderEffortControls(session, slug) {
   const feedback = session.liftFeedback?.[slug] || {};
   const effort = feedback.effort ?? "";
-  const painChecked = feedback.pain ? " checked" : "";
+  const painLevel = getPainLevel(feedback) || "none";
+  const stoppedEarly = feedback.stoppedEarly ? " checked" : "";
   const effortOptions = Array.from({ length: 10 }, (_, index) => {
     const value = index + 1;
     const selected = effort === value ? " selected" : "";
     return `<option value="${value}"${selected}>${value}/10</option>`;
   }).join("");
+  const painOptions = ["none", "mild", "moderate", "sharp"]
+    .map((level) => {
+      const selected = painLevel === level ? " selected" : "";
+      const label = level.charAt(0).toUpperCase() + level.slice(1);
+      return `<option value="${level}"${selected}>${label}</option>`;
+    })
+    .join("");
 
   return `<div class="effort-panel">
     <h2>How did it feel?</h2>
@@ -203,9 +234,13 @@ function renderEffortControls(session, slug) {
       <option value="">Not logged</option>
       ${effortOptions}
     </select>
+    <label class="field-label" for="lift-pain-level">Pain during this exercise</label>
+    <select id="lift-pain-level" class="dash-select effort-select">
+      ${painOptions}
+    </select>
     <label class="pain-check">
-      <input id="lift-pain" type="checkbox"${painChecked}>
-      <span>Pain or sharp discomfort during this exercise</span>
+      <input id="lift-stopped-early" type="checkbox"${stoppedEarly}>
+      <span>Stopped early due to symptoms</span>
     </label>
   </div>`;
 }
@@ -230,15 +265,18 @@ function lift(slug){
   const prev = workoutExercises[(idx-1+workoutExercises.length)%workoutExercises.length].slug;
   const next = workoutExercises[(idx+1)%workoutExercises.length].slug;
   const cues = e.cues.map(c=>`<li>${c}</li>`).join("");
-  const progressionCard = renderProgressionCard(e, sessions);
+  const progressionState = loadProgression();
+  const target = getExerciseTarget(progressionState, slug, e);
+  const targetBanner = renderTargetBanner(e, sessions, target);
   const effortControls = renderEffortControls(session, slug);
+  const defaultWeight = target?.weight ?? lastSet?.weight ?? "";
   return `<section>
     <div class="topbar"><a href="#/workout/${e.workout}">← Workout ${e.workout}</a><span>${e.name}</span></div>
     <div class="art"><img src="${img(e.slug)}" alt="${e.name}"></div>
     <h1>${e.name}</h1>
     <p class="lede">${e.subtitle}</p>
     <div class="sets">${e.sets}</div>
-    ${progressionCard}
+    ${targetBanner}
     ${savedSummary}
     <div class="card"><h2>How to do it</h2><p>${e.instructions}</p></div>
     <div class="card"><h2>Form cues</h2><ul>${cues}</ul></div>
@@ -256,7 +294,7 @@ function lift(slug){
           <button class="start">Start</button><button class="pause">Pause</button><button class="reset">Reset</button>
         </div>
       </div>
-      <input class="weight" placeholder="Weight used, e.g. 20" value="${lastSet?.weight || ""}">
+      <input class="weight" placeholder="Weight used, e.g. 20" value="${defaultWeight}">
       <textarea class="notes" placeholder="Notes">${lastSet?.notes || ""}</textarea>
       <button class="set-complete">Save Set + Start Timer</button>
     </div>
@@ -273,6 +311,97 @@ function emptyState(title, text) {
 function formatBest(value, suffix = "") {
   if (value == null) return "—";
   return `${value}${suffix}`;
+}
+
+
+function renderProgressionDashboard(sessions, progressionState) {
+  const pending = progressionState.suggestions.filter((s) => s.status === SUGGESTION_STATUS.PENDING);
+  const decided = progressionState.suggestions.filter((s) =>
+    [SUGGESTION_STATUS.ACCEPTED, SUGGESTION_STATUS.MODIFIED].includes(s.status)
+  ).slice(0, 5);
+  const dismissed = progressionState.suggestions.filter((s) => s.status === SUGGESTION_STATUS.DISMISSED).slice(0, 5);
+
+  const pendingCards = pending.length
+    ? pending.map((s) => {
+        const ex = exercise(s.exerciseId);
+        const name = ex?.name || s.exerciseId;
+        return `<div class="progression-review-card" data-suggestion-id="${s.id}">
+          <h3>${formatSuggestionTitle(s)} — ${name}</h3>
+          <p><strong>Recommendation:</strong> ${s.reason}</p>
+          <p class="progression-evidence">${s.evidence}</p>
+          <p class="progression-target-change">${formatTargetLabel(s.currentTarget, ex)} → ${formatTargetLabel(s.proposedTarget, ex)}</p>
+          <div class="progression-actions">
+            <button class="btn progression-accept" type="button" data-id="${s.id}">Accept</button>
+            <button class="secondary-btn progression-modify" type="button" data-id="${s.id}" data-exercise="${s.exerciseId}">Modify</button>
+            <button class="secondary-btn progression-dismiss" type="button" data-id="${s.id}">Dismiss</button>
+          </div>
+          <form class="progression-modify-form hidden" data-id="${s.id}">
+            <label class="field-label">Sets</label>
+            <input type="number" name="sets" value="${s.proposedTarget?.sets ?? ""}">
+            <label class="field-label">Min reps</label>
+            <input type="number" name="minReps" value="${s.proposedTarget?.minReps ?? ""}">
+            <label class="field-label">Max reps</label>
+            <input type="number" name="maxReps" value="${s.proposedTarget?.maxReps ?? ""}">
+            <label class="field-label">Weight (lb)</label>
+            <input type="number" name="weight" value="${s.proposedTarget?.weight ?? ""}">
+            <button class="btn progression-save-modify" type="submit" data-id="${s.id}">Save target</button>
+          </form>
+        </div>`;
+      }).join("")
+    : emptyState("No pending suggestions", "Finish an exercise during a workout to generate conservative progression suggestions.");
+
+  const decidedRows = decided.length
+    ? decided.map((s) => {
+        const ex = exercise(s.exerciseId);
+        return `<div class="history-item compact"><b>${ex?.name || s.exerciseId}</b><span>${s.status} • ${formatTargetLabel(s.proposedTarget, ex)}</span></div>`;
+      }).join("")
+    : `<p class="panel-note">No accepted changes yet.</p>`;
+
+  const dismissedRows = dismissed.length
+    ? dismissed.map((s) => {
+        const ex = exercise(s.exerciseId);
+        return `<div class="history-item compact"><b>${ex?.name || s.exerciseId}</b><span>Dismissed • ${s.reason}</span></div>`;
+      }).join("")
+    : `<p class="panel-note">No dismissed suggestions.</p>`;
+
+  const holdTypes = new Set([
+    SUGGESTION_TYPES.REPEAT_WEIGHT,
+    SUGGESTION_TYPES.REDUCE_WEIGHT,
+    SUGGESTION_TYPES.REDUCE_ONE_SET,
+    SUGGESTION_TYPES.SUBSTITUTION,
+    SUGGESTION_TYPES.EASIER_SESSION
+  ]);
+  const lastHoldByExercise = new Map();
+  for (const s of progressionState.suggestions) {
+    if (holdTypes.has(s.type) && !lastHoldByExercise.has(s.exerciseId)) {
+      lastHoldByExercise.set(s.exerciseId, s.reason);
+    }
+  }
+
+  const targetRows = progressionState.targets.map((target) => {
+    const ex = exercise(target.exerciseId);
+    const name = ex?.name || `${target.exerciseId} (not in plan)`;
+    const holdReason = lastHoldByExercise.get(target.exerciseId);
+    return `<div class="history-item compact target-row" data-exercise="${target.exerciseId}">
+      <b>${name}</b>
+      <span>${formatTargetLabel(target, ex)} • ${formatSourceLabel(target.source)}${holdReason ? ` • Hold: ${holdReason}` : ""}</span>
+    </div>`;
+  }).join("");
+
+  return `<div class="panel progression-panel">
+    <h2>Progression</h2>
+    <p class="panel-note">Conservative suggestions based on your logged workouts. Nothing changes until you accept it.</p>
+    <h3 class="progression-subhead">Pending</h3>
+    <div class="progression-review-list">${pendingCards}</div>
+    <h3 class="progression-subhead">Accepted / Modified</h3>
+    <div class="history-list">${decidedRows}</div>
+    <details class="progression-dismissed">
+      <summary>Dismissed suggestions</summary>
+      <div class="history-list">${dismissedRows}</div>
+    </details>
+    <h3 class="progression-subhead">Current targets</h3>
+    <div class="history-list">${targetRows || emptyState("No targets", "Targets will appear after your first migration.")}</div>
+  </div>`;
 }
 
 function dashboard(){
@@ -344,6 +473,8 @@ function dashboard(){
 
   const active = metrics.activeSession;
   const activeLine = active ? `<p class="lede">Active session: ${active.workout} (${active.sets.length} sets logged).</p>` : "";
+  const progressionState = loadProgression();
+  const progressionPanel = renderProgressionDashboard(sessions, progressionState);
 
   return `<section class="dashboard">
     <div class="topbar"><a href="#/">← Home</a><span>Dashboard</span></div>
@@ -357,6 +488,8 @@ function dashboard(){
       <div class="metric"><b>${metrics.sessionCount}</b><span>total sessions</span></div>
       <div class="metric"><b>${metrics.setCount}</b><span>saved sets</span></div>
     </div>
+
+    ${progressionPanel}
 
     <div class="panel">
       <h2>12-Week Workout Trend</h2>
@@ -419,10 +552,13 @@ let dashboardLiftSelection = null;
 
 function settings(){
   const url = localStorage.getItem(SHEETS_URL_KEY) || DEFAULT_SHEETS_URL;
+  const progressionState = loadProgression();
+  const weights = progressionState.equipment.availableDumbbellWeights.join(", ");
   return `<section>
     <div class="topbar"><a href="#/">← Home</a><span>Settings</span></div>
     <h1>Settings</h1>
     <div class="card"><h2>Google Sheets Web App URL</h2><p>Paste your deployed Google Apps Script Web App URL here.</p><textarea id="sheetsUrl">${url}</textarea><button class="btn" id="saveUrl">Save URL</button></div>
+    <div class="card"><h2>Available Dumbbells</h2><p>Used only for conservative weight-increase suggestions. Enter weights in pounds, separated by commas.</p><textarea id="dumbbellWeights" placeholder="5, 8, 10, 12, 15, 20, 25, 30">${weights}</textarea><button class="btn" id="saveEquipment">Save Dumbbells</button></div>
   </section>`;
 }
 
@@ -432,6 +568,20 @@ function bindPage(){
   const sync = qs("#sync"); if(sync) sync.onclick = syncSheets;
   const csv = qs("#csv"); if(csv) csv.onclick = exportCSV;
   const saveUrl = qs("#saveUrl"); if(saveUrl) saveUrl.onclick = ()=>{localStorage.setItem(SHEETS_URL_KEY, qs("#sheetsUrl").value.trim()); alert("Saved.");};
+  const saveEquipment = qs("#saveEquipment");
+  if (saveEquipment) {
+    saveEquipment.onclick = () => {
+      let state = loadProgression();
+      state = {
+        ...state,
+        equipment: {
+          availableDumbbellWeights: parseDumbbellWeightsInput(qs("#dumbbellWeights")?.value)
+        }
+      };
+      saveProgression(state);
+      alert("Dumbbell weights saved.");
+    };
+  }
   const finish = qs(".finish-workout");
   if(finish) finish.onclick = ()=>{
     const sessionId = finish.dataset.session;
@@ -455,8 +605,29 @@ function bindPage(){
     sessions = saveLiftFeedbackFromForm(sessions, sessionId, liftSlug);
     sessions = completeLiftInSession(sessions, sessionId, liftSlug);
     saveSessions(sessions);
+
+    const ex = exercise(liftSlug);
+    if (ex) {
+      let progState = loadProgression();
+      const target = getExerciseTarget(progState, liftSlug, ex);
+      const built = buildProgressionSuggestion(sessions, ex, {
+        target,
+        suggestions: progState.suggestions,
+        availableWeights: progState.equipment.availableDumbbellWeights
+      });
+      const payload = {
+        type: built.type,
+        currentTarget: built.currentTarget,
+        proposedTarget: built.proposedTarget,
+        reason: built.reason,
+        evidence: buildEvidence(sessions, liftSlug, built.currentTarget, ex)
+      };
+      const queued = evaluateAndQueueSuggestion(sessions, ex, progState, payload);
+      if (queued.queued) saveProgression(queued.state);
+    }
   });
   bindDashboard();
+  bindProgressionDashboard();
 }
 
 function bindDashboard(){
@@ -534,39 +705,55 @@ function bindDashboard(){
 function saveLiftFeedbackFromForm(sessions, sessionId, liftSlug) {
   const feedback = normalizeLiftFeedback({
     effort: qs("#lift-effort")?.value,
-    pain: qs("#lift-pain")?.checked
+    painLevel: qs("#lift-pain-level")?.value,
+    stoppedEarly: qs("#lift-stopped-early")?.checked
   });
   if (!feedback) return sessions;
   return setLiftFeedback(sessions, sessionId, liftSlug, feedback);
 }
 
-function bindProgressionControls(tool) {
-  const apply = qs(".progression-apply");
-  if (apply) {
-    apply.onclick = () => {
-      const weightInput = tool?.querySelector(".weight");
-      if (weightInput) {
-        weightInput.value = apply.dataset.weight || "";
-        weightInput.focus();
-      }
+function bindProgressionDashboard() {
+  document.querySelectorAll(".progression-accept").forEach((button) => {
+    button.onclick = () => {
+      let state = loadProgression();
+      state = acceptSuggestion(state, button.dataset.id);
+      saveProgression(state);
+      setRoute("#/dashboard");
     };
-  }
+  });
 
-  const dismiss = qs(".progression-dismiss");
-  if (dismiss) {
-    dismiss.onclick = () => {
-      const card = qs(".progression-card");
-      if (card) {
-        card.classList.add("progression-dismissed");
-        const note = document.createElement("p");
-        note.className = "progression-note";
-        note.textContent = "Keeping your current weight. You can revisit this suggestion next time.";
-        card.appendChild(note);
-        dismiss.remove();
-        apply?.remove();
-      }
+  document.querySelectorAll(".progression-dismiss").forEach((button) => {
+    button.onclick = () => {
+      let state = loadProgression();
+      state = dismissSuggestion(state, button.dataset.id);
+      saveProgression(state);
+      setRoute("#/dashboard");
     };
-  }
+  });
+
+  document.querySelectorAll(".progression-modify").forEach((button) => {
+    button.onclick = () => {
+      const form = document.querySelector(`.progression-modify-form[data-id="${button.dataset.id}"]`);
+      if (form) form.classList.toggle("hidden");
+    };
+  });
+
+  document.querySelectorAll(".progression-modify-form").forEach((form) => {
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      const id = form.dataset.id;
+      const patch = {
+        sets: Number(form.elements.sets.value) || undefined,
+        minReps: form.elements.minReps.value === "" ? null : Number(form.elements.minReps.value),
+        maxReps: form.elements.maxReps.value === "" ? null : Number(form.elements.maxReps.value),
+        weight: form.elements.weight.value === "" ? null : Number(form.elements.weight.value)
+      };
+      let state = loadProgression();
+      state = modifySuggestionTarget(state, id, patch);
+      saveProgression(state);
+      setRoute("#/dashboard");
+    };
+  });
 }
 
 function bindTool(tool){
@@ -603,7 +790,6 @@ function bindTool(tool){
     reps = 0; render();
     remaining = rest; start();
   };
-  bindProgressionControls(tool);
   render();
 }
 

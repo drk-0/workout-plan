@@ -66,6 +66,19 @@ input,textarea{width:100%;border:1px solid #cfd8e5;border-radius:12px;padding:13
 .progression-actions{display:grid;gap:8px;margin-top:10px}
 .progression-note{margin:8px 0 0;color:#667085;font-size:.92rem;line-height:1.4}
 .progression-dismissed{opacity:.88}
+.target-banner{border:1px solid rgba(255,255,255,.2);border-radius:16px;padding:12px 14px;margin:12px 0;background:rgba(255,255,255,.08)}
+.target-banner-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;line-height:1.45}
+.source-badge{display:inline-block;background:rgba(246,178,60,.25);color:#ffe6b8;border-radius:999px;padding:4px 10px;font-size:.85rem;font-weight:800}
+.target-banner-note,.safety-note{margin:8px 0 0;color:var(--muted);font-size:.92rem;line-height:1.4}
+.safety-note{color:#ffb4b4}
+.progression-panel .progression-subhead{margin:16px 0 8px;font-size:1.05rem;color:#fff}
+.progression-review-card{background:#fff;color:var(--ink);border-radius:16px;padding:14px;margin:10px 0}
+.progression-review-card h3{margin:0 0 8px;font-size:1.05rem}
+.progression-evidence,.progression-target-change{color:#475467;line-height:1.45;margin:6px 0}
+.progression-modify-form{margin-top:10px}
+.progression-modify-form.hidden{display:none}
+.progression-dismissed summary{cursor:pointer;color:var(--muted);margin:10px 0}
+.hidden{display:none}
 .effort-panel{background:rgba(255,255,255,.08);border:1px solid var(--border);border-radius:18px;padding:14px;margin:12px 0}
 .effort-panel h2{margin:0 0 6px;font-size:1.15rem}
 .effort-panel .panel-note{margin-bottom:8px}
