@@ -1,0 +1,8 @@
+{
+  "name": "workout-plan",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test js/workout-data.test.js js/progress.test.js"
+  }
+}

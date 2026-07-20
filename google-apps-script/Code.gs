@@ -9,7 +9,7 @@ function doPost(e) {
     let sheet = ss.getSheetByName(SHEET_NAME);
     if (!sheet) sheet = ss.insertSheet(SHEET_NAME);
 
-    const headers = ["id","timestamp","localTime","workout","lift","liftName","reps","weight","volume","notes","trigger","receivedAt"];
+    const headers = ["id","timestamp","localTime","sessionId","workout","lift","liftName","reps","weight","volume","notes","trigger","receivedAt"];
     if (sheet.getLastRow() === 0) sheet.appendRow(headers);
 
     const body = JSON.parse(e.postData.contents || "{}");
@@ -30,6 +30,7 @@ function doPost(e) {
       log.id || "",
       log.timestamp || "",
       log.localTime || "",
+      log.sessionId || "",
       log.workout || "",
       log.lift || "",
       log.liftName || "",
