@@ -1,6 +1,15 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <script>
+    (function () {
+      var path = location.pathname;
+      var last = path.split("/").pop() || "";
+      if (path && !path.endsWith("/") && !/\.[a-z0-9]+$/i.test(last)) {
+        location.replace(path + "/" + location.search + location.hash);
+      }
+    })();
+  </script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Workout Plan</title>

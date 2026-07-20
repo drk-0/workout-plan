@@ -9,17 +9,30 @@ function qs(sel){return document.querySelector(sel)}
 function fmt(s){s=Math.max(0,Number(s)||0);return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`}
 function logs(){try{return JSON.parse(localStorage.getItem("workoutHistory")||"[]")}catch{return[]}}
 function saveLogs(v){localStorage.setItem("workoutHistory",JSON.stringify(v))}
+function clearAllTimers(){
+  Object.keys(timerIntervals).forEach((key)=>{
+    clearInterval(timerIntervals[key]);
+    delete timerIntervals[key];
+  });
+}
 function img(slug){return `assets/exercises/${slug}.png`}
 function workoutOf(slug){return EXERCISES.find(e=>e.slug===slug)?.workout || "A"}
 function exercise(slug){return EXERCISES.find(e=>e.slug===slug)}
 
 function setRoute(hash){
+  clearAllTimers();
   const app = qs("#app");
   const route = (hash || "#/").replace(/^#\/?/,"");
   const parts = route.split("/").filter(Boolean);
   if(parts.length===0) app.innerHTML = home();
   else if(parts[0]==="workout") app.innerHTML = workout(parts[1] || "A");
-  else if(parts[0]==="lift") app.innerHTML = lift(parts[1]);
+  else if(parts[0]==="lift"){
+    if(parts[1] && exercise(parts[1])) app.innerHTML = lift(parts[1]);
+    else{
+      location.replace("#/");
+      return;
+    }
+  }
   else if(parts[0]==="dashboard") app.innerHTML = dashboard();
   else if(parts[0]==="settings") app.innerHTML = settings();
   else app.innerHTML = home();
@@ -66,10 +79,11 @@ function card(e){
 }
 
 function lift(slug){
-  const e = exercise(slug) || EXERCISES[0];
-  const idx = EXERCISES.findIndex(x=>x.slug===e.slug);
-  const prev = EXERCISES[(idx-1+EXERCISES.length)%EXERCISES.length].slug;
-  const next = EXERCISES[(idx+1)%EXERCISES.length].slug;
+  const e = exercise(slug);
+  const workoutExercises = EXERCISES.filter(x=>x.workout===e.workout);
+  const idx = workoutExercises.findIndex(x=>x.slug===e.slug);
+  const prev = workoutExercises[(idx-1+workoutExercises.length)%workoutExercises.length].slug;
+  const next = workoutExercises[(idx+1)%workoutExercises.length].slug;
   const cues = e.cues.map(c=>`<li>${c}</li>`).join("");
   return `<section>
     <div class="topbar"><a href="#/workout/${e.workout}">← Workout ${e.workout}</a><span>${e.name}</span></div>
@@ -148,14 +162,15 @@ function bindTool(tool){
   const rep = tool.querySelector(".repnum"), time = tool.querySelector(".time");
   let reps = 0, remaining = rest;
   const render=()=>{rep.textContent=reps; time.textContent=fmt(remaining)};
-  const stop=()=>{clearInterval(timerIntervals[liftSlug]); timerIntervals[liftSlug]=null};
-  const start=()=>{stop(); if(remaining<=0) remaining=rest; timerIntervals[liftSlug]=setInterval(()=>{remaining--; render(); if(remaining<=0){stop(); if(navigator.vibrate) navigator.vibrate([250,120,250]);}},1000)};
+  const stop=()=>{clearInterval(timerIntervals[liftSlug]); delete timerIntervals[liftSlug]};
+  const start=()=>{stop(); if(remaining<=0) remaining=rest; timerIntervals[liftSlug]=setInterval(()=>{remaining--; render(); if(remaining<=0){remaining=0; render(); stop(); if(navigator.vibrate) navigator.vibrate([250,120,250]);}},1000)};
   tool.querySelector(".plus").onclick=()=>{reps++; render()};
   tool.querySelector(".minus").onclick=()=>{reps=Math.max(0,reps-1); render()};
   tool.querySelector(".start").onclick=start;
   tool.querySelector(".pause").onclick=stop;
   tool.querySelector(".reset").onclick=()=>{stop(); remaining=rest; render()};
   tool.querySelector(".set-complete").onclick=()=>{
+    if(reps<=0){alert("Add at least 1 rep before saving this set."); return}
     const weight = Number((tool.querySelector(".weight").value||"").replace(/[^0-9.]/g,""))||0;
     const now = new Date();
     const entry = {
@@ -173,6 +188,7 @@ function bindTool(tool){
       synced: false
     };
     const l = logs(); l.unshift(entry); saveLogs(l);
+    reps = 0; render();
     remaining = rest; start();
   };
   render();
@@ -186,12 +202,24 @@ async function syncSheets(){
   if(!unsynced.length){status.textContent="Everything is synced."; return}
   status.textContent=`Syncing ${unsynced.length} sets...`;
   try{
-    await fetch(url,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({logs:unsynced})});
+    const response = await fetch(url,{
+      method:"POST",
+      headers:{"Content-Type":"text/plain;charset=utf-8"},
+      body:JSON.stringify({logs:unsynced})
+    });
+    if(!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    if(!result.ok) throw new Error(result.error || "Sync rejected by server.");
     const ids = new Set(unsynced.map(x=>x.id));
     saveLogs(l.map(x=>ids.has(x.id)?{...x,synced:true}:x));
-    status.textContent=`Synced ${unsynced.length} sets.`;
+    const saved = result.saved ?? unsynced.length;
+    status.textContent=saved===unsynced.length
+      ? `Synced ${saved} sets.`
+      : `Synced ${saved} new sets (${unsynced.length - saved} were already in the sheet).`;
     setTimeout(()=>setRoute(location.hash),500);
-  }catch(e){status.textContent="Sync failed. Check URL and internet connection."}
+  }catch(e){
+    status.textContent=`Sync failed: ${e.message || "Check URL and internet connection."}`;
+  }
 }
 
 function exportCSV(){
