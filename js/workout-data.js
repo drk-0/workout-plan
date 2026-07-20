@@ -171,6 +171,15 @@ export function getSetsForLift(session, liftSlug) {
   return (session?.sets || []).filter((set) => set.lift === liftSlug);
 }
 
+export const PAIN_LEVELS = ["none", "mild", "moderate", "sharp"];
+
+export function normalizePainLevel(raw) {
+  if (raw == null || raw === "") return null;
+  const level = String(raw).toLowerCase();
+  if (PAIN_LEVELS.includes(level)) return level;
+  return null;
+}
+
 export function normalizeLiftFeedback(raw) {
   if (!raw || typeof raw !== "object") return undefined;
 
@@ -178,7 +187,15 @@ export function normalizeLiftFeedback(raw) {
   const out = {};
 
   if (Number.isFinite(effort)) out.effort = effort;
-  if ("pain" in raw) out.pain = Boolean(raw.pain);
+
+  if ("painLevel" in raw) {
+    const painLevel = normalizePainLevel(raw.painLevel);
+    if (painLevel) out.painLevel = painLevel;
+  } else if ("pain" in raw) {
+    out.painLevel = raw.pain ? "moderate" : "none";
+  }
+
+  if ("stoppedEarly" in raw) out.stoppedEarly = Boolean(raw.stoppedEarly);
 
   return Object.keys(out).length ? out : undefined;
 }
