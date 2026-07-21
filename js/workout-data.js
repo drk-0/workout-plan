@@ -1,4 +1,6 @@
 export const HISTORY_KEY = "workoutHistory";
+export const SCHEMA_VERSION = 2;
+export const PENDING_READINESS_PREFIX = "pendingReadiness:";
 
 export function isLegacyLogEntry(entry) {
   return entry && typeof entry.reps === "number" && !Array.isArray(entry.sets);
@@ -26,10 +28,21 @@ export function volumeForSet(reps, weight) {
   return (+reps || 0) * (+weight || 0);
 }
 
-export function createSetEntry({ lift, liftName, reps, weight, notes, trigger = "set_complete", now = new Date() }) {
+export function createSetEntry({
+  lift,
+  liftName,
+  reps,
+  weight,
+  notes,
+  effort = null,
+  painDuringSet = null,
+  substitutedFrom = null,
+  trigger = "set_complete",
+  now = new Date()
+}) {
   const repsNum = +reps || 0;
   const weightNum = +weight || 0;
-  return {
+  const entry = {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     timestamp: now.toISOString(),
     localTime: now.toLocaleString(),
@@ -42,18 +55,30 @@ export function createSetEntry({ lift, liftName, reps, weight, notes, trigger = 
     trigger,
     synced: false
   };
+
+  if (effort != null && effort !== "") entry.effort = Number(effort);
+  const painLevel = normalizePainLevel(painDuringSet);
+  if (painLevel) entry.painDuringSet = painLevel;
+  if (substitutedFrom) entry.substitutedFrom = substitutedFrom;
+
+  return entry;
 }
 
-export function createSession(template, startedAt = new Date().toISOString()) {
+export function createSession(template, startedAt = new Date().toISOString(), extras = {}) {
   const letter = String(template).toUpperCase();
   return {
     id: `session-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    schemaVersion: SCHEMA_VERSION,
     template: letter,
     workout: workoutLabel(letter),
     startedAt,
     endedAt: null,
     completedLifts: [],
-    sets: []
+    skippedExercises: [],
+    substitutions: [],
+    progressionDecisions: [],
+    sets: [],
+    ...extras
   };
 }
 
@@ -93,14 +118,82 @@ export function migrateLegacyLogs(flatLogs) {
   return sessions;
 }
 
+export function migrateSessionV2(session) {
+  if (!session || !isSession(session)) return session;
+
+  const migrated = { ...session };
+
+  if (!migrated.schemaVersion || migrated.schemaVersion < SCHEMA_VERSION) {
+    migrated.schemaVersion = SCHEMA_VERSION;
+  }
+
+  if (!Array.isArray(migrated.skippedExercises)) migrated.skippedExercises = [];
+  if (!Array.isArray(migrated.substitutions)) migrated.substitutions = [];
+  if (!Array.isArray(migrated.progressionDecisions)) migrated.progressionDecisions = [];
+
+  if (!migrated.warmUp) {
+    migrated.warmUp = { completed: false, skipped: false, completedAt: null };
+  }
+
+  if (!migrated.readiness) {
+    const wellness = migrated.wellness || {};
+    migrated.readiness = {
+      migrated: true,
+      energy: null,
+      soreness: null,
+      painToday: null,
+      dizziness: false,
+      unusualWeakness: false,
+      unusualShortnessOfBreath: false,
+      chestDiscomfort: false,
+      confusion: false,
+      faintness: false,
+      glucose: wellness.glucosePre ?? null,
+      note: "",
+      recordedAt: migrated.startedAt || null,
+      blocked: false,
+      blockReasons: [],
+      suggestedAdjustments: [],
+      acceptedAdjustments: []
+    };
+    if (migrated.endedAt) {
+      migrated.warmUp = { completed: true, skipped: false, completedAt: migrated.startedAt };
+    }
+  }
+
+  if (!migrated.recovery && migrated.endedAt) {
+    const wellness = migrated.wellness || {};
+    migrated.recovery = {
+      migrated: true,
+      overallEffort: null,
+      unusualFatigue: false,
+      painAfter: "none",
+      glucose: wellness.glucosePost ?? null,
+      notes: "",
+      completionStatus: "completed",
+      recordedAt: migrated.endedAt
+    };
+  }
+
+  migrated.sets = (migrated.sets || []).map((set) => {
+    const updated = { ...set };
+    if (!updated.painDuringSet && set.pain != null) {
+      updated.painDuringSet = set.pain ? "moderate" : "none";
+    }
+    return updated;
+  });
+
+  return migrated;
+}
+
 export function normalizeHistory(raw) {
   if (!Array.isArray(raw) || raw.length === 0) return [];
 
   const legacy = raw.filter(isLegacyLogEntry);
-  const sessions = raw.filter(isSession);
+  const sessions = raw.filter(isSession).map(migrateSessionV2);
 
   if (legacy.length === 0) return sessions;
-  return [...migrateLegacyLogs(legacy), ...sessions].sort(
+  return [...migrateLegacyLogs(legacy).map(migrateSessionV2), ...sessions].sort(
     (a, b) => new Date(b.startedAt) - new Date(a.startedAt)
   );
 }
@@ -124,6 +217,38 @@ export function flattenSets(sessions) {
   }
   flat.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   return flat;
+}
+
+export function sessionPrerequisitesMet(session) {
+  if (!session) return false;
+  if (session.readiness?.migrated) return true;
+  if (session.readiness?.blocked) return false;
+  if (!session.readiness?.recordedAt) return false;
+  const warmUp = session.warmUp || {};
+  return Boolean(warmUp.completed || warmUp.skipped);
+}
+
+export function createSessionAfterWarmUp(sessions, template, readiness, warmUp) {
+  const letter = String(template).toUpperCase();
+  const active = getActiveSession(sessions);
+  let updated = sessions;
+
+  if (active) {
+    if (active.template === letter && sessionPrerequisitesMet(active)) {
+      return { sessions: updated, session: active, created: false };
+    }
+    updated = completeSession(updated, active.id);
+  }
+
+  const session = createSession(letter, new Date().toISOString(), {
+    readiness: {
+      ...readiness,
+      acceptedAdjustments: readiness?.acceptedAdjustments || []
+    },
+    warmUp: warmUp || { completed: true, skipped: false, completedAt: new Date().toISOString() }
+  });
+  updated = [session, ...updated];
+  return { sessions: updated, session, created: true };
 }
 
 export function ensureActiveSession(sessions, template) {
@@ -158,13 +283,76 @@ export function completeLiftInSession(sessions, sessionId, liftSlug) {
   });
 }
 
-export function completeSession(sessions, sessionId, endedAt = new Date().toISOString(), wellness) {
+export function completeSession(sessions, sessionId, endedAt = new Date().toISOString(), extras = {}) {
   return sessions.map((session) => {
     if (session.id !== sessionId) return session;
     const updated = { ...session, endedAt: session.endedAt || endedAt };
-    if (wellness && Object.keys(wellness).length) updated.wellness = wellness;
+    if (extras.wellness && Object.keys(extras.wellness).length) updated.wellness = extras.wellness;
+    if (extras.recovery) updated.recovery = extras.recovery;
     return updated;
   });
+}
+
+export function updateSession(sessions, sessionId, patch) {
+  return sessions.map((session) => (session.id === sessionId ? { ...session, ...patch } : session));
+}
+
+export function setSessionReadiness(sessions, sessionId, readiness) {
+  return updateSession(sessions, sessionId, { readiness });
+}
+
+export function setWarmUpStatus(sessions, sessionId, warmUp) {
+  return updateSession(sessions, sessionId, { warmUp });
+}
+
+export function addSubstitution(sessions, sessionId, originalSlug, substituteSlug) {
+  return sessions.map((session) => {
+    if (session.id !== sessionId) return session;
+    return {
+      ...session,
+      substitutions: [
+        ...(session.substitutions || []),
+        { originalSlug, substituteSlug, at: new Date().toISOString() }
+      ]
+    };
+  });
+}
+
+export function skipExerciseInSession(sessions, sessionId, liftSlug) {
+  return sessions.map((session) => {
+    if (session.id !== sessionId) return session;
+    const skipped = session.skippedExercises || [];
+    if (skipped.includes(liftSlug)) return session;
+    return { ...session, skippedExercises: [...skipped, liftSlug] };
+  });
+}
+
+export function setProgressionDecision(sessions, sessionId, decision) {
+  return sessions.map((session) => {
+    if (session.id !== sessionId) return session;
+    return {
+      ...session,
+      progressionDecisions: [...(session.progressionDecisions || []), decision]
+    };
+  });
+}
+
+export function hasBlockingSetPain(session, liftSlug) {
+  return getSetsForLift(session, liftSlug).some((set) => {
+    const level = normalizePainLevel(set.painDuringSet);
+    return level === "moderate" || level === "sharp";
+  });
+}
+
+export function hasSharpPainInSet(painDuringSet) {
+  return normalizePainLevel(painDuringSet) === "sharp";
+}
+
+export function getMaxSetEffort(session, liftSlug) {
+  const efforts = getSetsForLift(session, liftSlug)
+    .map((set) => set.effort)
+    .filter((effort) => effort != null);
+  return efforts.length ? Math.max(...efforts) : null;
 }
 
 export function getSetsForLift(session, liftSlug) {

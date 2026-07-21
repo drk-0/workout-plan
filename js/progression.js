@@ -1,4 +1,4 @@
-import { getSetsForLift } from "./workout-data.js";
+import { getSetsForLift, hasBlockingSetPain } from "./workout-data.js";
 import { weekKey } from "./progress.js";
 import {
   DEFAULT_DUMBBELL_WEIGHTS,
@@ -65,14 +65,40 @@ export function getPainLevel(feedback) {
   return null;
 }
 
+export function sessionHasBlockingPain(session, liftSlug) {
+  if (hasBlockingSetPain(session, liftSlug)) return true;
+  return isBlockingPain(getPainLevel(getLiftFeedback(session, liftSlug)));
+}
+
+export function getSessionEffort(session, liftSlug) {
+  const setEfforts = getSetsForLift(session, liftSlug)
+    .map((set) => set.effort)
+    .filter((effort) => effort != null);
+  if (setEfforts.length) return Math.max(...setEfforts);
+  return getLiftFeedback(session, liftSlug)?.effort ?? null;
+}
+
 export function isBlockingPain(level) {
   return level === "moderate" || level === "sharp";
 }
 
 export function hasRequiredFeedback(session, liftSlug) {
-  const feedback = getLiftFeedback(session, liftSlug);
-  if (!feedback || feedback.effort == null) return false;
-  return getPainLevel(feedback) != null;
+  const effort = getSessionEffort(session, liftSlug);
+  if (effort == null) {
+    const feedback = getLiftFeedback(session, liftSlug);
+    if (!feedback || feedback.effort == null) return false;
+  }
+
+  const sets = getSetsForLift(session, liftSlug);
+  const hasSetPainData = sets.some((set) => normalizeSetPain(set) != null);
+  if (hasSetPainData) return true;
+
+  return getPainLevel(getLiftFeedback(session, liftSlug)) != null;
+}
+
+function normalizeSetPain(set) {
+  if (!set?.painDuringSet) return null;
+  return set.painDuringSet;
 }
 
 export function targetToProgression(target, exercise) {
@@ -135,7 +161,7 @@ export function countRecentHighEffortSessions(liftSessions, liftSlug, count = 2)
   let highEffortCount = 0;
 
   for (const session of liftSessions.slice(0, count)) {
-    const effort = getLiftFeedback(session, liftSlug)?.effort;
+    const effort = getSessionEffort(session, liftSlug);
     if (effort != null && effort >= HIGH_EFFORT_THRESHOLD) {
       highEffortCount += 1;
     }
@@ -209,16 +235,13 @@ export function buildEvidence(sessions, exerciseId, target, exercise = null) {
   });
 
   const efforts = liftSessions
-    .map((session) => getLiftFeedback(session, exerciseId)?.effort)
+    .map((session) => getSessionEffort(session, exerciseId))
     .filter((effort) => effort != null);
   const avgEffort = efforts.length
     ? Math.round((efforts.reduce((a, b) => a + b, 0) / efforts.length) * 10) / 10
     : null;
 
-  const painReported = liftSessions.some((session) => {
-    const level = getPainLevel(getLiftFeedback(session, exerciseId));
-    return level && level !== "none";
-  });
+  const painReported = liftSessions.some((session) => sessionHasBlockingPain(session, exerciseId));
 
   const effortPart = avgEffort != null ? ` with average effort of ${avgEffort}` : "";
   const painPart = painReported ? " with pain reported" : " and no pain reported";
@@ -264,10 +287,10 @@ export function isWeightIncreaseEligible(sessions, exercise, target, options = {
   }
 
   for (const session of [latest, previous]) {
-    const feedback = getLiftFeedback(session, liftSlug);
-    if (isBlockingPain(getPainLevel(feedback))) {
+    if (sessionHasBlockingPain(session, liftSlug)) {
       return { eligible: false, reason: "Moderate or sharp pain was recorded." };
     }
+    const feedback = getLiftFeedback(session, liftSlug);
     if (feedback?.stoppedEarly) {
       return { eligible: false, reason: "Exercise was stopped early for symptoms." };
     }
@@ -327,8 +350,7 @@ export function buildProgressionSuggestion(sessions, exercise, options = {}) {
   }
 
   if (latestSession) {
-    const latestPain = getPainLevel(getLiftFeedback(latestSession, liftSlug));
-    if (isBlockingPain(latestPain)) {
+    if (sessionHasBlockingPain(latestSession, liftSlug)) {
       return buildResult(
         SUGGESTION_TYPES.SUBSTITUTION,
         "Pain was reported in your last session for this exercise.",
@@ -505,4 +527,13 @@ export function formatSuggestionTitle(suggestion) {
 
 export function formatSuggestionRecommendation(suggestion) {
   return suggestion.recommendation || suggestion.suggestion || "";
+}
+
+export function shouldStartRestTimerAfterSet(painDuringSet) {
+  return normalizePainLevelForTimer(painDuringSet) !== "sharp";
+}
+
+export function normalizePainLevelForTimer(painDuringSet) {
+  if (!painDuringSet || painDuringSet === "none") return "none";
+  return String(painDuringSet).toLowerCase();
 }

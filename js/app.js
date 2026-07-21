@@ -1,4 +1,4 @@
-import { EXERCISES } from "./exercises.js";
+import { EXERCISES, getWorkoutExercises } from "./exercises.js";
 import { renderBarChart, renderLineChart } from "./charts.js";
 import {
   buildEvidence,
@@ -7,6 +7,7 @@ import {
   getLiftFeedback,
   getPainLevel,
   getSessionsWithLift,
+  shouldStartRestTimerAfterSet,
   SUGGESTION_TYPES
 } from "./progression.js";
 import {
@@ -38,20 +39,39 @@ import {
   normalizeWellness
 } from "./progress.js";
 import {
+  normalizeReadiness,
+  readinessIsComplete
+} from "./readiness.js";
+import { WARMUP_STEPS } from "./warmup.js";
+import { normalizeRecovery } from "./recovery.js";
+import { getSubstitutes } from "./substitutions.js";
+import {
+  MEDICAL_DISCLAIMER,
+  READINESS_BLOCK_MESSAGE,
+  SHARP_PAIN_WARNING,
+  URGENT_SYMPTOM_WARNING,
+  renderStopSymptomsList
+} from "./safety.js";
+import {
   HISTORY_KEY,
+  PENDING_READINESS_PREFIX,
   addSetToSession,
+  addSubstitution,
   calculateMetrics,
   completeLiftInSession,
   completeSession,
+  createSessionAfterWarmUp,
   createSetEntry,
-  ensureActiveSession,
   flattenSets,
   getActiveSession,
   getSetsForLift,
   markSetsSynced,
   normalizeHistory,
   normalizeLiftFeedback,
-  setLiftFeedback
+  sessionPrerequisitesMet,
+  setLiftFeedback,
+  skipExerciseInSession,
+  updateSession
 } from "./workout-data.js";
 
 const SHEETS_URL_KEY = "googleSheetsWebAppUrl";
@@ -88,8 +108,79 @@ function clearAllTimers(){
   });
 }
 function img(slug){return `assets/exercises/${slug}.png`}
-function workoutOf(slug){return EXERCISES.find(e=>e.slug===slug)?.workout || "A"}
+function exerciseImage(e){return img(e?.imageSlug || e?.slug)}
+function workoutOf(slug){
+  const ex = EXERCISES.find(e=>e.slug===slug);
+  if(!ex) return "A";
+  if(ex.workout !== "sub") return ex.workout;
+  for(const main of EXERCISES.filter((item)=>item.workout !== "sub")){
+    if(main.substitutes?.some((sub)=>sub.slug===slug)) return main.workout;
+  }
+  return "A";
+}
 function exercise(slug){return EXERCISES.find(e=>e.slug===slug)}
+
+function pendingReadinessKey(template){return `${PENDING_READINESS_PREFIX}${String(template).toUpperCase()}`}
+function savePendingReadiness(template, readiness){
+  sessionStorage.setItem(pendingReadinessKey(template), JSON.stringify(readiness));
+}
+function loadPendingReadiness(template){
+  try{
+    const raw = sessionStorage.getItem(pendingReadinessKey(template));
+    return raw ? JSON.parse(raw) : null;
+  }catch{return null}
+}
+function clearPendingReadiness(template){sessionStorage.removeItem(pendingReadinessKey(template))}
+
+function workoutEntryHref(letter){
+  const normalized = String(letter || "A").toUpperCase();
+  const sessions = persistMigratedSessions();
+  const active = getActiveSession(sessions);
+  if(active && active.template === normalized && sessionPrerequisitesMet(active)) return `#/workout/${normalized}`;
+  if(active && active.template === normalized && active.readiness?.recordedAt && !(active.warmUp?.completed || active.warmUp?.skipped)) return `#/warmup/${normalized}`;
+  return `#/readiness/${normalized}`;
+}
+
+function gateActiveSession(letter){
+  const normalized = String(letter || "A").toUpperCase();
+  const sessions = persistMigratedSessions();
+  const active = getActiveSession(sessions);
+  if(!active || active.template !== normalized){
+    location.replace(`#/readiness/${normalized}`);
+    return null;
+  }
+  if(active.readiness?.blocked){
+    location.replace(`#/readiness/${normalized}`);
+    return null;
+  }
+  if(!sessionPrerequisitesMet(active)){
+    if(!readinessIsComplete(active.readiness) && !active.readiness?.migrated){
+      location.replace(`#/readiness/${normalized}`);
+      return null;
+    }
+    if(!(active.warmUp?.completed || active.warmUp?.skipped)){
+      location.replace(`#/warmup/${normalized}`);
+      return null;
+    }
+  }
+  return active;
+}
+
+function renderScaleButtons(name, min, max, selected){
+  return Array.from({length: max - min + 1}, (_, i) => {
+    const value = min + i;
+    const pressed = Number(selected) === value ? " aria-pressed=\"true\"" : " aria-pressed=\"false\"";
+    return `<button type="button" class="scale-btn${Number(selected) === value ? " scale-btn-active" : ""}" data-scale="${name}" data-value="${value}"${pressed}>${value}</button>`;
+  }).join("");
+}
+
+function renderSafetyWarning(title, message, extra = ""){
+  return `<div class="safety-warning" role="alert">
+    <h2>${title}</h2>
+    <p>${message}</p>
+    ${extra}
+  </div>`;
+}
 
 function setRoute(hash){
   clearAllTimers();
@@ -97,6 +188,9 @@ function setRoute(hash){
   const route = (hash || "#/").replace(/^#\/?/,"");
   const parts = route.split("/").filter(Boolean);
   if(parts.length===0) app.innerHTML = home();
+  else if(parts[0]==="readiness") app.innerHTML = readiness(parts[1] || "A");
+  else if(parts[0]==="warmup") app.innerHTML = warmUp(parts[1] || "A");
+  else if(parts[0]==="recovery") app.innerHTML = recovery();
   else if(parts[0]==="workout") app.innerHTML = workout(parts[1] || "A");
   else if(parts[0]==="lift"){
     if(parts[1] && exercise(parts[1])) app.innerHTML = lift(parts[1]);
@@ -113,9 +207,18 @@ function setRoute(hash){
 }
 
 function home(){
-  const active = getActiveSession(persistMigratedSessions());
+  const sessions = persistMigratedSessions();
+  const active = getActiveSession(sessions);
+  let resumeHref = "#/";
+  if(active){
+    if(!sessionPrerequisitesMet(active) && !active.readiness?.migrated){
+      resumeHref = readinessIsComplete(active.readiness) ? `#/warmup/${active.template}` : `#/readiness/${active.template}`;
+    } else {
+      resumeHref = `#/workout/${active.template}`;
+    }
+  }
   const activeBanner = active
-    ? `<div class="session-banner"><strong>Session in progress:</strong> ${active.workout} • ${active.sets.length} sets logged • ${active.completedLifts.length} exercises done <a href="#/workout/${active.template}">Resume</a></div>`
+    ? `<div class="session-banner"><strong>Session in progress:</strong> ${active.workout} • ${active.sets.length} sets logged • ${active.completedLifts.length} exercises done <a href="${resumeHref}">Resume</a></div>`
     : "";
   return `<section>
     ${activeBanner}
@@ -127,41 +230,143 @@ function home(){
       <div class="goal"><b>Muscle</b><span>Controlled reps and progressive overload.</span></div>
       <div class="goal"><b>Body Comp</b><span>Protein, walking, and slow fat loss.</span></div>
       <div class="goal"><b>Consistency</b><span>Start with 3 solid workouts per week.</span></div>
-      <div class="goal"><b>Dashboard</b><span>Track history, reps, volume, and progress.</span></div>
+      <div class="goal"><b>Safety</b><span>Readiness check before each workout.</span></div>
     </div>
     <div class="action-grid">
-      <a class="btn" href="#/workout/A">Workout A<br><small>Push + legs</small></a>
-      <a class="btn" href="#/workout/B">Workout B<br><small>Pull + legs</small></a>
+      <a class="btn" href="${workoutEntryHref("A")}">Workout A<br><small>Push + legs</small></a>
+      <a class="btn" href="${workoutEntryHref("B")}">Workout B<br><small>Pull + legs</small></a>
     </div>
-    <div class="panel"><h2>Today's Rule</h2><p>Train clean. Stop with 1–3 good reps left. Review progression suggestions on the Dashboard — you decide whether to follow them.</p></div>
+    <div class="panel"><h2>Today's Rule</h2><p>Train clean. Stop with 1–3 good reps left. Review progression suggestions on the Dashboard — you decide whether to follow them.</p><p class="panel-note">${MEDICAL_DISCLAIMER}</p></div>
     <div class="panel"><a class="secondary-btn" href="#/dashboard">Open Dashboard</a></div>
     <div class="panel"><h2>Settings</h2><a class="secondary-btn" href="#/settings">Settings</a></div>
   </section>`;
 }
 
+function readiness(letter){
+  const normalized = String(letter || "A").toUpperCase();
+  const pending = loadPendingReadiness(normalized);
+  const energy = pending?.energy ?? "";
+  const soreness = pending?.soreness ?? "";
+  const painToday = pending?.painToday ?? "none";
+  return `<section>
+    <div class="topbar"><a href="#/">← Home</a><span>Readiness</span></div>
+    <h1>Pre-Workout Check</h1>
+    <p class="lede">Workout ${normalized}. Answer honestly. This is not medical advice.</p>
+    <form id="readiness-form" class="readiness-form" data-template="${normalized}">
+      <div class="card readiness-card">
+        <h2>How do you feel?</h2>
+        <p class="field-label">Energy level (1 = very low, 5 = good)</p>
+        <div class="scale-row" role="group" aria-label="Energy level">${renderScaleButtons("energy", 1, 5, energy)}</div>
+        <p class="field-label">Soreness level (1 = none, 5 = very sore)</p>
+        <div class="scale-row" role="group" aria-label="Soreness level">${renderScaleButtons("soreness", 1, 5, soreness)}</div>
+        <label class="field-label" for="pain-today">Pain today</label>
+        <select id="pain-today" class="dash-select">
+          ${["none","mild","moderate","severe"].map((level)=>`<option value="${level}"${painToday===level?" selected":""}>${level.charAt(0).toUpperCase()+level.slice(1)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="card readiness-card">
+        <h2>Symptoms today</h2>
+        <label class="toggle-row"><input type="checkbox" id="dizziness"${pending?.dizziness?" checked":""}><span>Dizziness or unusual weakness</span></label>
+        <label class="toggle-row"><input type="checkbox" id="unusual-sob"${pending?.unusualShortnessOfBreath?" checked":""}><span>Unusual shortness of breath</span></label>
+        <label class="toggle-row"><input type="checkbox" id="chest-discomfort"${pending?.chestDiscomfort?" checked":""}><span>Chest discomfort</span></label>
+        <label class="toggle-row"><input type="checkbox" id="confusion"${pending?.confusion?" checked":""}><span>Confusion</span></label>
+        <label class="toggle-row"><input type="checkbox" id="faintness"${pending?.faintness?" checked":""}><span>Faintness</span></label>
+      </div>
+      <div class="card readiness-card">
+        <label class="field-label" for="readiness-glucose">Optional glucose (mg/dL)</label>
+        <input id="readiness-glucose" type="number" inputmode="decimal" placeholder="Optional" value="${pending?.glucose ?? ""}">
+        <label class="field-label" for="readiness-note">Optional note</label>
+        <textarea id="readiness-note" placeholder="Optional">${pending?.note || ""}</textarea>
+      </div>
+      <div class="panel safety-panel">
+        <h2>Stop exercising and seek help if you have:</h2>
+        <ul class="safety-list">${renderStopSymptomsList()}</ul>
+        <p class="panel-note">${URGENT_SYMPTOM_WARNING}</p>
+      </div>
+      <button class="btn" type="submit">Continue</button>
+    </form>
+    <div id="readiness-result"></div>
+  </section>`;
+}
+
+function warmUp(letter){
+  const normalized = String(letter || "A").toUpperCase();
+  const readiness = loadPendingReadiness(normalized);
+  if(!readiness || readiness.blocked){
+    location.replace(`#/readiness/${normalized}`);
+    return "";
+  }
+  const steps = WARMUP_STEPS.map((step, index)=>`<div class="warmup-step">
+    <div class="warmup-step-num">${index + 1}</div>
+    <div><h3>${step.title}</h3><p class="warmup-duration">${step.duration}</p><p>${step.detail}</p></div>
+  </div>`).join("");
+  return `<section>
+    <div class="topbar"><a href="#/readiness/${normalized}">← Back</a><span>Warm-up</span></div>
+    <h1>Warm-Up</h1>
+    <p class="lede">Workout ${normalized}. Move gently before lifting. About 3–5 minutes total.</p>
+    <div class="warmup-list">${steps}</div>
+    <button class="btn warmup-complete" data-template="${normalized}">Warm-up complete</button>
+    <button class="secondary-btn warmup-skip" data-template="${normalized}">Skip warm-up</button>
+    <p class="panel-note">Skipping warm-up may increase injury risk. Only skip if you are already warmed up.</p>
+  </section>`;
+}
+
+function recovery(){
+  const sessions = persistMigratedSessions();
+  const session = getActiveSession(sessions);
+  if(!session){
+    location.replace("#/");
+    return "";
+  }
+  return `<section>
+    <div class="topbar"><a href="#/workout/${session.template}">← Workout</a><span>Recovery</span></div>
+    <h1>Post-Workout Check</h1>
+    <p class="lede">How did the session go? Optional — for your records only.</p>
+    <form id="recovery-form" class="recovery-form" data-session="${session.id}">
+      <div class="card">
+        <label class="field-label" for="recovery-effort">Overall workout effort (1–10)</label>
+        <select id="recovery-effort" class="dash-select">
+          <option value="">Not logged</option>
+          ${Array.from({length:10},(_,i)=>`<option value="${i+1}">${i+1}/10</option>`).join("")}
+        </select>
+        <label class="toggle-row"><input type="checkbox" id="recovery-fatigue"><span>Unusual fatigue</span></label>
+        <label class="field-label" for="recovery-pain">Pain after workout</label>
+        <select id="recovery-pain" class="dash-select">
+          ${["none","mild","moderate","severe"].map((level)=>`<option value="${level}">${level.charAt(0).toUpperCase()+level.slice(1)}</option>`).join("")}
+        </select>
+        <label class="field-label" for="recovery-glucose">Optional post-workout glucose (mg/dL)</label>
+        <input id="recovery-glucose" type="number" inputmode="decimal" placeholder="Optional">
+        <label class="field-label" for="recovery-status">Session status</label>
+        <select id="recovery-status" class="dash-select">
+          <option value="completed">Completed</option>
+          <option value="shortened">Shortened</option>
+          <option value="stopped">Stopped early</option>
+        </select>
+        <label class="field-label" for="wellness-weight">Body weight (lb)</label>
+        <input id="wellness-weight" type="number" inputmode="decimal" placeholder="Optional">
+        <label class="field-label" for="wellness-waist">Waist (in)</label>
+        <input id="wellness-waist" type="number" inputmode="decimal" placeholder="Optional">
+        <label class="field-label" for="recovery-notes">Notes</label>
+        <textarea id="recovery-notes" placeholder="Optional"></textarea>
+      </div>
+      <p class="panel-note">${MEDICAL_DISCLAIMER}</p>
+      <button class="btn" type="submit">Save and finish</button>
+    </form>
+  </section>`;
+}
+
 function workout(letter){
   const normalizedLetter = String(letter || "A").toUpperCase();
-  let sessions = persistMigratedSessions();
-  const ensured = ensureActiveSession(sessions, normalizedLetter);
-  if(ensured.created || JSON.stringify(sessions) !== JSON.stringify(ensured.sessions)){
-    sessions = ensured.sessions;
-    saveSessions(sessions);
-  }
-  const session = ensured.session;
-  const list = EXERCISES.filter(e=>e.workout===normalizedLetter).map(e=>card(e, session)).join("");
+  const session = gateActiveSession(normalizedLetter);
+  if(!session) return "";
+  const adjustmentBanner = session.readiness?.acceptedAdjustments?.length
+    ? `<div class="adjustment-banner"><strong>Today's adjustments (your choice):</strong><ul>${session.readiness.acceptedAdjustments.map((item)=>`<li>${item}</li>`).join("")}</ul></div>`
+    : "";
+  const list = getWorkoutExercises(normalizedLetter).map(e=>card(e, session)).join("");
   const finishBtn = session.endedAt === null
     ? `<div class="panel finish-panel">
-        <h2>Finish Workout</h2>
-        <p class="lede">Optional notes for your records. These fields are for personal tracking only — not medical advice.</p>
-        <label class="field-label" for="wellness-weight">Body weight (lb)</label>
-        <input id="wellness-weight" type="number" inputmode="decimal" placeholder="e.g. 182">
-        <label class="field-label" for="wellness-waist">Waist (in)</label>
-        <input id="wellness-waist" type="number" inputmode="decimal" placeholder="e.g. 36">
-        <label class="field-label" for="wellness-glucose-pre">Pre-workout glucose (mg/dL)</label>
-        <input id="wellness-glucose-pre" type="number" inputmode="decimal" placeholder="Optional">
-        <label class="field-label" for="wellness-glucose-post">Post-workout glucose (mg/dL)</label>
-        <input id="wellness-glucose-post" type="number" inputmode="decimal" placeholder="Optional">
         <button class="btn finish-workout" data-session="${session.id}">Complete Workout</button>
+        <p class="panel-note">You'll log recovery details on the next screen.</p>
       </div>`
     : "";
   return `<section>
@@ -169,6 +374,7 @@ function workout(letter){
     <h1>Workout ${normalizedLetter}</h1>
     <p class="lede">${normalizedLetter==="A"?"Push + legs":"Pull + legs"}. Tap any lift for timer, rep counter, cues, logging, and video.</p>
     <div class="session-banner in-progress"><strong>Session active</strong> • ${session.sets.length} sets saved • ${session.completedLifts.length} exercises complete</div>
+    ${adjustmentBanner}
     <div class="lift-list">${list}</div>
     ${finishBtn}
   </section>`;
@@ -177,13 +383,16 @@ function workout(letter){
 function card(e, session){
   const setsForLift = getSetsForLift(session, e.slug);
   const done = session.completedLifts.includes(e.slug);
-  const status = done
-    ? `<span class="lift-status done">Complete</span>`
-    : setsForLift.length
-      ? `<span class="lift-status in-progress">${setsForLift.length} set${setsForLift.length===1?"":"s"} logged</span>`
-      : `<span class="lift-status">${e.subtitle}</span>`;
+  const skipped = (session.skippedExercises || []).includes(e.slug);
+  const status = skipped
+    ? `<span class="lift-status">Skipped</span>`
+    : done
+      ? `<span class="lift-status done">Complete</span>`
+      : setsForLift.length
+        ? `<span class="lift-status in-progress">${setsForLift.length} set${setsForLift.length===1?"":"s"} logged</span>`
+        : `<span class="lift-status">${e.subtitle}</span>`;
   return `<a class="lift-card${done?" lift-card-done":""}" href="#/lift/${e.slug}">
-    <img src="${img(e.slug)}" alt="${e.name}">
+    <img src="${exerciseImage(e)}" alt="${e.name}">
     <div><h3>${e.name}</h3><p>${e.sets}</p>${status}</div>
   </a>`;
 }
@@ -208,71 +417,82 @@ function renderTargetBanner(exercise, sessions, target) {
   </div>`;
 }
 
-function renderEffortControls(session, slug) {
-  const feedback = session.liftFeedback?.[slug] || {};
-  const effort = feedback.effort ?? "";
-  const painLevel = getPainLevel(feedback) || "none";
-  const stoppedEarly = feedback.stoppedEarly ? " checked" : "";
+function renderSetTrackingControls(){
   const effortOptions = Array.from({ length: 10 }, (_, index) => {
     const value = index + 1;
-    const selected = effort === value ? " selected" : "";
-    return `<option value="${value}"${selected}>${value}/10</option>`;
+    return `<option value="${value}">${value}/10</option>`;
   }).join("");
   const painOptions = ["none", "mild", "moderate", "sharp"]
-    .map((level) => {
-      const selected = painLevel === level ? " selected" : "";
-      const label = level.charAt(0).toUpperCase() + level.slice(1);
-      return `<option value="${level}"${selected}>${label}</option>`;
-    })
+    .map((level) => `<option value="${level}">${level.charAt(0).toUpperCase() + level.slice(1)}</option>`)
     .join("");
 
-  return `<div class="effort-panel">
-    <h2>How did it feel?</h2>
-    <p class="panel-note">Optional. Used for conservative progression suggestions — not medical advice.</p>
-    <label class="field-label" for="lift-effort">Effort (1 = easy, 10 = max)</label>
-    <select id="lift-effort" class="dash-select effort-select">
-      <option value="">Not logged</option>
+  return `<div class="set-tracking">
+    <label class="field-label" for="set-effort">Effort this set (1–10)</label>
+    <select id="set-effort" class="dash-select effort-select" required>
+      <option value="">Select effort</option>
       ${effortOptions}
     </select>
-    <label class="field-label" for="lift-pain-level">Pain during this exercise</label>
-    <select id="lift-pain-level" class="dash-select effort-select">
+    <label class="field-label" for="set-pain">Pain during this set</label>
+    <select id="set-pain" class="dash-select effort-select" required>
       ${painOptions}
     </select>
-    <label class="pain-check">
-      <input id="lift-stopped-early" type="checkbox"${stoppedEarly}>
-      <span>Stopped early due to symptoms</span>
-    </label>
+    <div id="sharp-pain-warning" class="safety-warning hidden" role="alert">
+      <h2>Stop this exercise</h2>
+      <p>${SHARP_PAIN_WARNING}</p>
+      <div class="action-grid">
+        <button type="button" class="secondary-btn skip-exercise">Skip Exercise</button>
+        <button type="button" class="btn choose-substitute">Choose Substitute</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderSubstituteModal(exercise){
+  const subs = getSubstitutes(exercise);
+  if(!subs.length) return "";
+  const options = subs.map((sub)=>`<button type="button" class="secondary-btn substitute-option" data-slug="${sub.slug}" data-original="${exercise.slug}">${sub.label}<br><small>${sub.reason}</small></button>`).join("");
+  return `<div id="substitute-modal" class="substitute-modal hidden" role="dialog" aria-label="Choose substitute">
+    <div class="card">
+      <h2>Choose a substitute</h2>
+      <p>Easier options for ${exercise.name}:</p>
+      <div class="action-grid">${options}</div>
+      <button type="button" class="secondary-btn close-substitute">Cancel</button>
+    </div>
   </div>`;
 }
 
 function lift(slug){
   const e = exercise(slug);
-  let sessions = persistMigratedSessions();
-  let session = getActiveSession(sessions);
-  if(!session || session.template !== e.workout){
-    const ensured = ensureActiveSession(sessions, e.workout);
-    sessions = ensured.sessions;
-    saveSessions(sessions);
-    session = ensured.session;
+  if(!e){
+    location.replace("#/");
+    return "";
   }
+  const workoutLetter = e.workout === "sub" ? workoutOf(slug) : e.workout;
+  const session = gateActiveSession(workoutLetter);
+  if(!session) return "";
+
   const savedSets = getSetsForLift(session, slug);
   const savedSummary = savedSets.length
-    ? `<p class="saved-sets">Saved this session: ${savedSets.map(s=>`${s.reps} reps${s.weight?` @ ${s.weight} lb`:""}`).join(" • ")}</p>`
+    ? `<p class="saved-sets">Saved this session: ${savedSets.map(s=>`${s.reps} reps${s.weight?` @ ${s.weight} lb`:""}${s.effort?` • effort ${s.effort}`:""}${s.painDuringSet && s.painDuringSet!=="none"?` • pain: ${s.painDuringSet}`:""}`).join(" • ")}</p>`
     : "";
   const lastSet = savedSets[0];
-  const workoutExercises = EXERCISES.filter(x=>x.workout===e.workout);
-  const idx = workoutExercises.findIndex(x=>x.slug===e.slug);
-  const prev = workoutExercises[(idx-1+workoutExercises.length)%workoutExercises.length].slug;
-  const next = workoutExercises[(idx+1)%workoutExercises.length].slug;
+  const workoutExercises = getWorkoutExercises(workoutLetter);
+  const idx = workoutExercises.findIndex(x=>x.slug===slug);
+  const navExercises = idx >= 0 ? workoutExercises : [...workoutExercises, e];
+  const navIdx = navExercises.findIndex(x=>x.slug===slug);
+  const prev = navExercises[(navIdx-1+navExercises.length)%navExercises.length].slug;
+  const next = navExercises[(navIdx+1)%navExercises.length].slug;
   const cues = e.cues.map(c=>`<li>${c}</li>`).join("");
   const progressionState = loadProgression();
   const target = getExerciseTarget(progressionState, slug, e);
-  const targetBanner = renderTargetBanner(e, sessions, target);
-  const effortControls = renderEffortControls(session, slug);
+  const targetBanner = renderTargetBanner(e, persistMigratedSessions(), target);
+  const setTracking = renderSetTrackingControls();
+  const substituteModal = renderSubstituteModal(e);
   const defaultWeight = target?.weight ?? lastSet?.weight ?? "";
+  const backHref = e.workout === "sub" ? `#/workout/${workoutLetter}` : `#/workout/${e.workout}`;
   return `<section>
-    <div class="topbar"><a href="#/workout/${e.workout}">← Workout ${e.workout}</a><span>${e.name}</span></div>
-    <div class="art"><img src="${img(e.slug)}" alt="${e.name}"></div>
+    <div class="topbar"><a href="${backHref}">← Workout ${workoutLetter}</a><span>${e.name}</span></div>
+    <div class="art"><img src="${exerciseImage(e)}" alt="${e.name}"></div>
     <h1>${e.name}</h1>
     <p class="lede">${e.subtitle}</p>
     <div class="sets">${e.sets}</div>
@@ -280,7 +500,7 @@ function lift(slug){
     ${savedSummary}
     <div class="card"><h2>How to do it</h2><p>${e.instructions}</p></div>
     <div class="card"><h2>Form cues</h2><ul>${cues}</ul></div>
-    <div class="card tools" data-lift="${e.slug}" data-rest="${e.rest}" data-session="${session.id}">
+    <div class="card tools" data-lift="${e.slug}" data-rest="${e.rest}" data-session="${session.id}" data-original="${slug}">
       <h2>Rep Counter + Rest Timer</h2>
       <div class="counter">
         <button class="minus">−</button>
@@ -295,10 +515,11 @@ function lift(slug){
         </div>
       </div>
       <input class="weight" placeholder="Weight used, e.g. 20" value="${defaultWeight}">
-      <textarea class="notes" placeholder="Notes">${lastSet?.notes || ""}</textarea>
-      <button class="set-complete">Save Set + Start Timer</button>
+      <textarea class="notes" placeholder="Optional note for this set">${lastSet?.notes || ""}</textarea>
+      ${setTracking}
+      <button class="set-complete">Save Set</button>
     </div>
-    ${effortControls}
+    ${substituteModal}
     <a class="video" href="${e.video}" target="_blank" rel="noopener noreferrer">Open video in new tab</a>
     <div class="action-grid"><a class="secondary-btn" href="#/lift/${prev}">← Previous</a><a class="secondary-btn lift-next" href="#/lift/${next}" data-lift="${e.slug}">Next →</a></div>
   </section>`;
@@ -562,9 +783,138 @@ function settings(){
   </section>`;
 }
 
+function bindReadinessForm(){
+  const form = qs("#readiness-form");
+  if(!form) return;
+
+  form.querySelectorAll(".scale-btn").forEach((button)=>{
+    button.onclick = ()=>{
+      const name = button.dataset.scale;
+      form.querySelectorAll(`.scale-btn[data-scale="${name}"]`).forEach((btn)=>{
+        btn.classList.toggle("scale-btn-active", btn === button);
+        btn.setAttribute("aria-pressed", btn === button ? "true" : "false");
+      });
+      form.dataset[name] = button.dataset.value;
+    };
+  });
+
+  form.onsubmit = (event)=>{
+    event.preventDefault();
+    const template = form.dataset.template;
+    const readiness = normalizeReadiness({
+      energy: form.dataset.energy,
+      soreness: form.dataset.soreness,
+      painToday: qs("#pain-today")?.value,
+      dizziness: qs("#dizziness")?.checked,
+      unusualWeakness: qs("#dizziness")?.checked,
+      unusualShortnessOfBreath: qs("#unusual-sob")?.checked,
+      chestDiscomfort: qs("#chest-discomfort")?.checked,
+      confusion: qs("#confusion")?.checked,
+      faintness: qs("#faintness")?.checked,
+      glucose: qs("#readiness-glucose")?.value,
+      note: qs("#readiness-note")?.value
+    });
+
+    if(readiness.energy == null || readiness.soreness == null){
+      alert("Please select energy and soreness levels.");
+      return;
+    }
+
+    const resultHost = qs("#readiness-result");
+    if(readiness.blocked){
+      savePendingReadiness(template, readiness);
+      resultHost.innerHTML = `${renderSafetyWarning("Do not start this workout", READINESS_BLOCK_MESSAGE, `<p><strong>Reported:</strong> ${readiness.blockReasons.join(", ")}</p><a class="btn" href="#/">Return home</a>`)}`;
+      return;
+    }
+
+    savePendingReadiness(template, readiness);
+    if(readiness.suggestedAdjustments.length){
+      resultHost.innerHTML = `<div class="panel adjustment-panel">
+        <h2>Suggested adjustments</h2>
+        <p>These are suggestions only. Nothing changes unless you choose to follow them.</p>
+        <ul>${readiness.suggestedAdjustments.map((item)=>`<li>${item}</li>`).join("")}</ul>
+        <button class="btn readiness-continue" data-template="${template}">Continue to warm-up</button>
+      </div>`;
+      qs(".readiness-continue").onclick = ()=>{
+        const updated = { ...readiness, acceptedAdjustments: [...readiness.suggestedAdjustments] };
+        savePendingReadiness(template, updated);
+        setRoute(`#/warmup/${template}`);
+      };
+      return;
+    }
+    setRoute(`#/warmup/${template}`);
+  };
+}
+
+function bindWarmUp(){
+  const complete = qs(".warmup-complete");
+  if(complete){
+    complete.onclick = ()=>{
+      const template = complete.dataset.template;
+      const readiness = loadPendingReadiness(template);
+      if(!readiness || readiness.blocked) return;
+      let sessions = loadSessions();
+      const result = createSessionAfterWarmUp(sessions, template, readiness, {
+        completed: true,
+        skipped: false,
+        completedAt: new Date().toISOString()
+      });
+      saveSessions(result.sessions);
+      clearPendingReadiness(template);
+      setRoute(`#/workout/${template}`);
+    };
+  }
+  const skip = qs(".warmup-skip");
+  if(skip){
+    skip.onclick = ()=>{
+      if(!confirm("Skipping warm-up may increase injury risk. Skip anyway?")) return;
+      const template = skip.dataset.template;
+      const readiness = loadPendingReadiness(template);
+      if(!readiness || readiness.blocked) return;
+      let sessions = loadSessions();
+      const result = createSessionAfterWarmUp(sessions, template, readiness, {
+        completed: false,
+        skipped: true,
+        completedAt: new Date().toISOString()
+      });
+      saveSessions(result.sessions);
+      clearPendingReadiness(template);
+      setRoute(`#/workout/${template}`);
+    };
+  }
+}
+
+function bindRecoveryForm(){
+  const form = qs("#recovery-form");
+  if(!form) return;
+  form.onsubmit = (event)=>{
+    event.preventDefault();
+    const sessionId = form.dataset.session;
+    let sessions = loadSessions();
+    const recovery = normalizeRecovery({
+      overallEffort: qs("#recovery-effort")?.value,
+      unusualFatigue: qs("#recovery-fatigue")?.checked,
+      painAfter: qs("#recovery-pain")?.value,
+      glucose: qs("#recovery-glucose")?.value,
+      completionStatus: qs("#recovery-status")?.value,
+      notes: qs("#recovery-notes")?.value
+    });
+    const wellness = normalizeWellness({
+      bodyWeight: qs("#wellness-weight")?.value,
+      waistInches: qs("#wellness-waist")?.value
+    });
+    sessions = completeSession(sessions, sessionId, new Date().toISOString(), { recovery, wellness });
+    saveSessions(sessions);
+    setRoute("#/");
+  };
+}
+
 function bindPage(){
   const tool = qs(".tools");
   if(tool) bindTool(tool);
+  bindReadinessForm();
+  bindWarmUp();
+  bindRecoveryForm();
   const sync = qs("#sync"); if(sync) sync.onclick = syncSheets;
   const csv = qs("#csv"); if(csv) csv.onclick = exportCSV;
   const saveUrl = qs("#saveUrl"); if(saveUrl) saveUrl.onclick = ()=>{localStorage.setItem(SHEETS_URL_KEY, qs("#sheetsUrl").value.trim()); alert("Saved.");};
@@ -584,17 +934,7 @@ function bindPage(){
   }
   const finish = qs(".finish-workout");
   if(finish) finish.onclick = ()=>{
-    const sessionId = finish.dataset.session;
-    let sessions = loadSessions();
-    const wellness = normalizeWellness({
-      bodyWeight: qs("#wellness-weight")?.value,
-      waistInches: qs("#wellness-waist")?.value,
-      glucosePre: qs("#wellness-glucose-pre")?.value,
-      glucosePost: qs("#wellness-glucose-post")?.value
-    });
-    sessions = completeSession(sessions, sessionId, new Date().toISOString(), wellness);
-    saveSessions(sessions);
-    setRoute("#/");
+    setRoute("#/recovery");
   };
   const next = qs(".lift-next");
   if(next) next.addEventListener("click", ()=>{
@@ -602,7 +942,6 @@ function bindPage(){
     const sessionId = tool?.dataset.session;
     if(!liftSlug || !sessionId) return;
     let sessions = loadSessions();
-    sessions = saveLiftFeedbackFromForm(sessions, sessionId, liftSlug);
     sessions = completeLiftInSession(sessions, sessionId, liftSlug);
     saveSessions(sessions);
 
@@ -760,6 +1099,9 @@ function bindTool(tool){
   const liftSlug = tool.dataset.lift, e = exercise(liftSlug), rest = +tool.dataset.rest;
   const sessionId = tool.dataset.session;
   const rep = tool.querySelector(".repnum"), time = tool.querySelector(".time");
+  const painSelect = qs("#set-pain");
+  const sharpWarning = qs("#sharp-pain-warning");
+  const substituteModal = qs("#substitute-modal");
   let reps = 0, remaining = rest;
   const render=()=>{rep.textContent=reps; time.textContent=fmt(remaining)};
   const stop=()=>{clearInterval(timerIntervals[liftSlug]); delete timerIntervals[liftSlug]};
@@ -769,10 +1111,49 @@ function bindTool(tool){
   tool.querySelector(".start").onclick=start;
   tool.querySelector(".pause").onclick=stop;
   tool.querySelector(".reset").onclick=()=>{stop(); remaining=rest; render()};
+  if(painSelect){
+    painSelect.onchange = ()=>{
+      const isSharp = painSelect.value === "sharp";
+      sharpWarning?.classList.toggle("hidden", !isSharp);
+    };
+  }
+  const skipBtn = qs(".skip-exercise");
+  if(skipBtn){
+    skipBtn.onclick = ()=>{
+      let sessions = loadSessions();
+      sessions = skipExerciseInSession(sessions, sessionId, liftSlug);
+      saveSessions(sessions);
+      const workoutLetter = e.workout === "sub" ? workoutOf(liftSlug) : e.workout;
+      setRoute(`#/workout/${workoutLetter}`);
+    };
+  }
+  const chooseSub = qs(".choose-substitute");
+  if(chooseSub){
+    chooseSub.onclick = ()=> substituteModal?.classList.remove("hidden");
+  }
+  qs(".close-substitute")?.addEventListener("click", ()=> substituteModal?.classList.add("hidden"));
+  document.querySelectorAll(".substitute-option").forEach((button)=>{
+    button.onclick = ()=>{
+      const substituteSlug = button.dataset.slug;
+      const originalSlug = button.dataset.original;
+      let sessions = loadSessions();
+      sessions = addSubstitution(sessions, sessionId, originalSlug, substituteSlug);
+      saveSessions(sessions);
+      setRoute(`#/lift/${substituteSlug}`);
+    };
+  });
   tool.querySelector(".set-complete").onclick=()=>{
     if(reps<=0){alert("Add at least 1 rep before saving this set."); return}
     if(!sessionId){
-      alert("Start Workout A or Workout B before saving sets.");
+      alert("Complete the readiness check and warm-up before saving sets.");
+      return;
+    }
+    const effort = qs("#set-effort")?.value;
+    const painDuringSet = qs("#set-pain")?.value;
+    if(!effort){alert("Select effort for this set (1–10)."); return}
+    if(!painDuringSet){alert("Select pain level for this set."); return}
+    if(painDuringSet === "sharp"){
+      sharpWarning?.classList.remove("hidden");
       return;
     }
     const weight = Number((tool.querySelector(".weight").value||"").replace(/[^0-9.]/g,""))||0;
@@ -781,14 +1162,21 @@ function bindTool(tool){
       liftName: e.name,
       reps,
       weight,
-      notes: tool.querySelector(".notes").value || ""
+      notes: tool.querySelector(".notes").value || "",
+      effort: Number(effort),
+      painDuringSet
     });
     let sessions = loadSessions();
     sessions = addSetToSession(sessions, sessionId, entry);
-    sessions = saveLiftFeedbackFromForm(sessions, sessionId, liftSlug);
+    sessions = setLiftFeedback(sessions, sessionId, liftSlug, {
+      effort: Number(effort),
+      painLevel: painDuringSet
+    });
     saveSessions(sessions);
     reps = 0; render();
-    remaining = rest; start();
+    if(shouldStartRestTimerAfterSet(painDuringSet)){
+      remaining = rest; start();
+    }
   };
   render();
 }
@@ -829,7 +1217,7 @@ function exportCSV(){
   const setRows=[setHeaders.join(",")].concat(flat.map(x=>setHeaders.map(h=>`"${String(x[h]??"").replaceAll('"','""')}"`).join(",")));
 
   const bodyMetrics = loadBodyMetrics();
-  const bodyHeaders=["date","weight","waist","notes","timestamp"];
+  const bodyHeaders=["date","weight","bodyFat","waist","source","notes","timestamp"];
   const bodyRows=[bodyHeaders.join(",")].concat(bodyMetrics.map(x=>bodyHeaders.map(h=>`"${String(x[h]??"").replaceAll('"','""')}"`).join(",")));
 
   const glucose = getGlucoseLog(sessions);
