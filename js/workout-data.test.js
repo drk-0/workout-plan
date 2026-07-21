@@ -90,6 +90,35 @@ test("migrateLegacyLogs groups sets by workout template and local date", () => {
   assert.equal(july21.sets[0].workout, undefined);
 });
 
+test("migrateSessionV2 preserves legacy set fields exactly", () => {
+  const originalSet = {
+    id: "set-legacy",
+    timestamp: "2026-05-01T10:05:00.000Z",
+    localTime: "5/1/2026",
+    lift: "goblet-squat",
+    liftName: "Goblet Squat",
+    reps: 12,
+    weight: 20,
+    volume: 240,
+    notes: "steady",
+    trigger: "set_complete",
+    synced: true
+  };
+  const [migrated] = normalizeHistory([
+    {
+      id: "legacy-only-sets",
+      template: "A",
+      workout: "Workout A",
+      startedAt: "2026-05-01T10:00:00.000Z",
+      endedAt: "2026-05-01T11:00:00.000Z",
+      completedLifts: ["goblet-squat"],
+      sets: [originalSet]
+    }
+  ]);
+  assert.deepEqual(migrated.sets[0], originalSet);
+  assert.equal(migrated.readiness.migrated, true);
+});
+
 test("migrateSessionV2 adds defaults without losing sets", () => {
   const legacySession = {
     id: "old-session",
@@ -141,6 +170,28 @@ test("sessionPrerequisitesMet allows migrated sessions", () => {
   const session = createSession("A");
   session.readiness = { migrated: true };
   assert.equal(sessionPrerequisitesMet(session), true);
+});
+
+test("createSessionAfterWarmUp refuses blocked readiness", () => {
+  const readiness = {
+    energy: 4,
+    soreness: 2,
+    painToday: "severe",
+    recordedAt: new Date().toISOString(),
+    blocked: true,
+    blockReasons: ["severe pain today"],
+    suggestedAdjustments: [],
+    acceptedAdjustments: []
+  };
+  const result = createSessionAfterWarmUp([], "A", readiness, {
+    completed: true,
+    skipped: false,
+    completedAt: new Date().toISOString()
+  });
+  assert.equal(result.created, false);
+  assert.equal(result.blocked, true);
+  assert.equal(result.session, null);
+  assert.equal(result.sessions.length, 0);
 });
 
 test("createSessionAfterWarmUp stores readiness and warm-up", () => {

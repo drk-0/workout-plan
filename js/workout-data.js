@@ -159,6 +159,12 @@ export function migrateSessionV2(session) {
     if (migrated.endedAt) {
       migrated.warmUp = { completed: true, skipped: false, completedAt: migrated.startedAt };
     }
+  } else {
+    const readiness = { ...migrated.readiness };
+    if (!Array.isArray(readiness.blockReasons)) readiness.blockReasons = [];
+    if (!Array.isArray(readiness.suggestedAdjustments)) readiness.suggestedAdjustments = [];
+    if (!Array.isArray(readiness.acceptedAdjustments)) readiness.acceptedAdjustments = [];
+    migrated.readiness = readiness;
   }
 
   if (!migrated.recovery && migrated.endedAt) {
@@ -229,6 +235,9 @@ export function sessionPrerequisitesMet(session) {
 }
 
 export function createSessionAfterWarmUp(sessions, template, readiness, warmUp) {
+  if (readiness?.blocked) {
+    return { sessions, session: null, created: false, blocked: true };
+  }
   const letter = String(template).toUpperCase();
   const active = getActiveSession(sessions);
   let updated = sessions;

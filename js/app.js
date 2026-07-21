@@ -273,7 +273,8 @@ function readiness(letter){
       </div>
       <div class="card readiness-card">
         <h2>Symptoms today</h2>
-        <label class="toggle-row"><input type="checkbox" id="dizziness"${pending?.dizziness?" checked":""}><span>Dizziness or unusual weakness</span></label>
+        <label class="toggle-row"><input type="checkbox" id="dizziness"${pending?.dizziness?" checked":""}><span>Dizziness</span></label>
+        <label class="toggle-row"><input type="checkbox" id="unusual-weakness"${pending?.unusualWeakness?" checked":""}><span>Unusual weakness</span></label>
         <label class="toggle-row"><input type="checkbox" id="unusual-sob"${pending?.unusualShortnessOfBreath?" checked":""}><span>Unusual shortness of breath</span></label>
         <label class="toggle-row"><input type="checkbox" id="chest-discomfort"${pending?.chestDiscomfort?" checked":""}><span>Chest discomfort</span></label>
         <label class="toggle-row"><input type="checkbox" id="confusion"${pending?.confusion?" checked":""}><span>Confusion</span></label>
@@ -849,7 +850,7 @@ function bindReadinessForm(){
       soreness: form.dataset.soreness,
       painToday: qs("#pain-today")?.value,
       dizziness: qs("#dizziness")?.checked,
-      unusualWeakness: qs("#dizziness")?.checked,
+      unusualWeakness: qs("#unusual-weakness")?.checked,
       unusualShortnessOfBreath: qs("#unusual-sob")?.checked,
       chestDiscomfort: qs("#chest-discomfort")?.checked,
       confusion: qs("#confusion")?.checked,
