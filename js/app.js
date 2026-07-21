@@ -39,6 +39,13 @@ import {
   normalizeWellness
 } from "./progress.js";
 import {
+  formatHealthConnectStatus,
+  getHealthConnectAvailability,
+  getLastHealthConnectSync,
+  isHealthConnectRuntime,
+  syncBodyMetricsFromHealthConnect
+} from "./health-connect.js";
+import {
   normalizeReadiness,
   readinessIsComplete
 } from "./readiness.js";
@@ -625,6 +632,21 @@ function renderProgressionDashboard(sessions, progressionState) {
   </div>`;
 }
 
+function formatBodyMetricLine(entry) {
+  const parts = [];
+  if (entry.weight != null) parts.push(`${entry.weight} lb`);
+  if (entry.bodyFat != null) parts.push(`${entry.bodyFat}% body fat`);
+  if (entry.waist != null) parts.push(`waist ${entry.waist} in`);
+  const detail = parts.length ? parts.join(" • ") : "—";
+  const source =
+    entry.source === "health_connect"
+      ? "GE scale"
+      : entry.source === "workout"
+        ? "workout"
+        : entry.notes || "manual";
+  return { detail, source };
+}
+
 function dashboard(){
   const sessions = persistMigratedSessions();
   const metrics = calculateMetrics(sessions);
@@ -661,14 +683,21 @@ function dashboard(){
   const bodyRows = bodyTimeline.length
     ? bodyTimeline
         .slice(0, 12)
-        .map(
-          (entry) => `<div class="history-item compact">
+        .map((entry) => {
+          const { detail, source } = formatBodyMetricLine(entry);
+          return `<div class="history-item compact">
             <b>${entry.date}</b>
-            <span>${entry.weight != null ? `${entry.weight} lb` : "—"}${entry.waist != null ? ` • waist ${entry.waist} in` : ""}${entry.notes ? ` • ${entry.notes}` : ""}</span>
-          </div>`
-        )
+            <span>${detail}${source ? ` • ${source}` : ""}</span>
+          </div>`;
+        })
         .join("")
-    : emptyState("No body measurements yet", "Log weight or waist below, or add them when you finish a workout.");
+    : emptyState("No body measurements yet", "Sync from your GE scale or log weight and waist below.");
+
+  const lastHcSync = getLastHealthConnectSync();
+  const hcSyncLabel = lastHcSync
+    ? `Last scale sync: ${new Date(lastHcSync).toLocaleString()}`
+    : "No scale sync yet.";
+  const hcRuntime = isHealthConnectRuntime();
 
   const glucoseRows = glucoseLog.length
     ? glucoseLog
@@ -732,7 +761,12 @@ function dashboard(){
 
     <div class="panel">
       <h2>Body Measurements</h2>
-      <p class="panel-note">Track weight and waist over time. Not a substitute for professional care.</p>
+      <p class="panel-note">Track weight trends from your GE scale or manual entries. Weekly averages matter more than daily noise. Not a substitute for professional care.</p>
+      <div class="health-connect-panel">
+        <p id="hc-status" class="lede">${hcRuntime ? "Checking Health Connect…" : "Browser mode — install the Android app to sync from your GE scale."}</p>
+        <p class="panel-note">${hcSyncLabel}</p>
+        <button class="btn" id="hc-sync" type="button"${hcRuntime ? "" : " disabled"}>Sync from GE Scale</button>
+      </div>
       <form id="body-metric-form" class="metric-form">
         <label class="field-label" for="metric-date">Date</label>
         <input id="metric-date" type="date" required>
@@ -775,9 +809,18 @@ function settings(){
   const url = localStorage.getItem(SHEETS_URL_KEY) || DEFAULT_SHEETS_URL;
   const progressionState = loadProgression();
   const weights = progressionState.equipment.availableDumbbellWeights.join(", ");
+  const hcRuntime = isHealthConnectRuntime();
+  const lastHcSync = getLastHealthConnectSync();
   return `<section>
     <div class="topbar"><a href="#/">← Home</a><span>Settings</span></div>
     <h1>Settings</h1>
+    <div class="card">
+      <h2>GE Scale / Health Connect</h2>
+      <p>${hcRuntime ? "Sync weight from your GE scale through Health Connect." : "Health Connect sync requires the Android app build. The browser PWA can still log measurements manually."}</p>
+      <p class="panel-note">${lastHcSync ? `Last sync: ${new Date(lastHcSync).toLocaleString()}` : "No scale sync yet."}</p>
+      <button class="btn" id="hc-sync-settings" type="button"${hcRuntime ? "" : " disabled"}>Sync from GE Scale</button>
+      <p id="hc-settings-status" class="lede"></p>
+    </div>
     <div class="card"><h2>Google Sheets Web App URL</h2><p>Paste your deployed Google Apps Script Web App URL here.</p><textarea id="sheetsUrl">${url}</textarea><button class="btn" id="saveUrl">Save URL</button></div>
     <div class="card"><h2>Available Dumbbells</h2><p>Used only for conservative weight-increase suggestions. Enter weights in pounds, separated by commas.</p><textarea id="dumbbellWeights" placeholder="5, 8, 10, 12, 15, 20, 25, 30">${weights}</textarea><button class="btn" id="saveEquipment">Save Dumbbells</button></div>
   </section>`;
@@ -967,6 +1010,41 @@ function bindPage(){
   });
   bindDashboard();
   bindProgressionDashboard();
+  bindHealthConnect();
+}
+
+async function bindHealthConnect() {
+  const statusEl = qs("#hc-status");
+  const settingsStatus = qs("#hc-settings-status");
+
+  if (statusEl || settingsStatus) {
+    const availability = await getHealthConnectAvailability();
+    const { label } = formatHealthConnectStatus(availability);
+    if (statusEl) {
+      statusEl.textContent = availability === "WebOnly"
+        ? "Browser mode — install the Android app to sync from your GE scale."
+        : `Health Connect: ${label}`;
+    }
+  }
+
+  const runSync = async (statusTarget) => {
+    if (statusTarget) statusTarget.textContent = "Syncing from GE scale…";
+    try {
+      const result = await syncBodyMetricsFromHealthConnect();
+      if (statusTarget) statusTarget.textContent = result.message;
+      if (result.ok) setRoute(location.hash);
+    } catch (error) {
+      if (statusTarget) {
+        statusTarget.textContent = `Scale sync failed: ${error.message || "Check Health Connect permissions."}`;
+      }
+    }
+  };
+
+  const syncBtn = qs("#hc-sync");
+  if (syncBtn) syncBtn.onclick = () => runSync(statusEl);
+
+  const settingsBtn = qs("#hc-sync-settings");
+  if (settingsBtn) settingsBtn.onclick = () => runSync(settingsStatus);
 }
 
 function bindDashboard(){
