@@ -2,8 +2,11 @@ import { EXERCISES } from "./exercises.js";
 
 const SHEETS_URL_KEY = "googleSheetsWebAppUrl";
 const DEFAULT_SHEETS_URL = "PASTE_YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE";
+const IOS_INSTALL_DISMISS_KEY = "iosInstallDismissed";
 
 let timerIntervals = {};
+let wakeLock = null;
+let activeTimers = 0;
 
 function qs(sel){return document.querySelector(sel)}
 function fmt(s){s=Math.max(0,Number(s)||0);return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`}
@@ -12,8 +15,49 @@ function saveLogs(v){localStorage.setItem("workoutHistory",JSON.stringify(v))}
 function img(slug){return `assets/exercises/${slug}.png`}
 function workoutOf(slug){return EXERCISES.find(e=>e.slug===slug)?.workout || "A"}
 function exercise(slug){return EXERCISES.find(e=>e.slug===slug)}
+function isIOS(){
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function isStandalone(){
+  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+}
+function showIOSInstallBanner(){
+  if(!isIOS() || isStandalone()) return;
+  if(localStorage.getItem(IOS_INSTALL_DISMISS_KEY) === "1") return;
+  const banner = qs("#ios-install");
+  const dismiss = qs("#ios-install-dismiss");
+  if(!banner || !dismiss) return;
+  banner.hidden = false;
+  dismiss.onclick = ()=>{
+    banner.hidden = true;
+    localStorage.setItem(IOS_INSTALL_DISMISS_KEY, "1");
+  };
+}
+async function requestWakeLock(){
+  if(!("wakeLock" in navigator) || wakeLock) return;
+  try{ wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release", ()=>{ wakeLock = null; }); }catch{}
+}
+async function releaseWakeLock(){
+  if(!wakeLock) return;
+  try{ await wakeLock.release(); }catch{}
+  wakeLock = null;
+}
+async function syncWakeLock(){
+  if(activeTimers > 0) await requestWakeLock();
+  else await releaseWakeLock();
+}
+
+function clearAllTimers(){
+  Object.keys(timerIntervals).forEach(key=>{
+    if(timerIntervals[key]) clearInterval(timerIntervals[key]);
+    timerIntervals[key] = null;
+  });
+  activeTimers = 0;
+  releaseWakeLock();
+}
 
 function setRoute(hash){
+  clearAllTimers();
   const app = qs("#app");
   const route = (hash || "#/").replace(/^#\/?/,"");
   const parts = route.split("/").filter(Boolean);
@@ -93,7 +137,7 @@ function lift(slug){
           <button class="start">Start</button><button class="pause">Pause</button><button class="reset">Reset</button>
         </div>
       </div>
-      <input class="weight" placeholder="Weight used, e.g. 20">
+      <input class="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Weight used, e.g. 20">
       <textarea class="notes" placeholder="Notes"></textarea>
       <button class="set-complete">Save Set + Start Timer</button>
     </div>
@@ -146,10 +190,35 @@ function bindPage(){
 function bindTool(tool){
   const liftSlug = tool.dataset.lift, e = exercise(liftSlug), rest = +tool.dataset.rest;
   const rep = tool.querySelector(".repnum"), time = tool.querySelector(".time");
-  let reps = 0, remaining = rest;
+  let reps = 0, remaining = rest, endAt = null;
   const render=()=>{rep.textContent=reps; time.textContent=fmt(remaining)};
-  const stop=()=>{clearInterval(timerIntervals[liftSlug]); timerIntervals[liftSlug]=null};
-  const start=()=>{stop(); if(remaining<=0) remaining=rest; timerIntervals[liftSlug]=setInterval(()=>{remaining--; render(); if(remaining<=0){stop(); if(navigator.vibrate) navigator.vibrate([250,120,250]);}},1000)};
+  const stop=()=>{
+    if(timerIntervals[liftSlug]){
+      clearInterval(timerIntervals[liftSlug]);
+      timerIntervals[liftSlug]=null;
+      activeTimers = Math.max(0, activeTimers - 1);
+      syncWakeLock();
+    }
+    endAt = null;
+  };
+  const tick=()=>{
+    if(endAt === null) return;
+    remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+    render();
+    if(remaining <= 0){
+      stop();
+      if(navigator.vibrate) navigator.vibrate([250,120,250]);
+    }
+  };
+  const start=()=>{
+    stop();
+    if(remaining<=0) remaining=rest;
+    endAt = Date.now() + remaining * 1000;
+    timerIntervals[liftSlug]=setInterval(tick, 250);
+    activeTimers++;
+    syncWakeLock();
+    tick();
+  };
   tool.querySelector(".plus").onclick=()=>{reps++; render()};
   tool.querySelector(".minus").onclick=()=>{reps=Math.max(0,reps-1); render()};
   tool.querySelector(".start").onclick=start;
@@ -202,7 +271,12 @@ function exportCSV(){
 }
 
 window.addEventListener("hashchange",()=>setRoute(location.hash));
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState === "visible") syncWakeLock();
+});
+window.addEventListener("pagehide", releaseWakeLock);
 setRoute(location.hash);
+showIOSInstallBanner();
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>navigator.serviceWorker.register("./service-worker.js").catch(console.log));
