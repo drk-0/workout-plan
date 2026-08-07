@@ -44,7 +44,7 @@ import {
   getLastHealthConnectSync,
   isHealthConnectRuntime,
   syncBodyMetricsFromHealthConnect
-} from "./health-connect.js";
+} from "./health-integration.js";
 import {
   normalizeReadiness,
   readinessIsComplete
@@ -88,6 +88,7 @@ const IOS_INSTALL_DISMISS_KEY = "iosInstallDismissed";
 let timerIntervals = {};
 let wakeLock = null;
 let activeTimers = 0;
+let wakeLockOperation = Promise.resolve();
 
 function qs(sel){return document.querySelector(sel)}
 function fmt(s){s=Math.max(0,Number(s)||0);return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`}
@@ -158,9 +159,12 @@ async function releaseWakeLock(){
   try{ await wakeLock.release(); }catch{}
   wakeLock = null;
 }
-async function syncWakeLock(){
-  if(activeTimers > 0) await requestWakeLock();
-  else await releaseWakeLock();
+function syncWakeLock(){
+  const shouldHoldLock = activeTimers > 0;
+  wakeLockOperation = wakeLockOperation
+    .catch(()=>{})
+    .then(()=> shouldHoldLock ? requestWakeLock() : releaseWakeLock());
+  return wakeLockOperation;
 }
 
 function pendingReadinessKey(template){return `${PENDING_READINESS_PREFIX}${String(template).toUpperCase()}`}

@@ -7,3 +7,5 @@ android/build/
 android/local.properties
 .DS_Store
 *.log
+playwright-report/
+test-results/
