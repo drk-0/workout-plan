@@ -113,5 +113,9 @@ Settings > Pages > Deploy from branch > main > root.
 ## Tests
 
 ```bash
+npx playwright install chromium webkit
 npm test
 ```
+
+The test suite runs unit tests plus browser startup checks using iPhone and iPad
+WebKit profiles and an offline service-worker reload check.
