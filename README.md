@@ -29,6 +29,26 @@ Open:
 http://localhost:8000
 ```
 
+## Install on iPhone or iPad
+
+For a true installable PWA, host it on HTTPS, such as GitHub Pages.
+
+Then on your iPhone or iPad:
+
+1. Open the URL in **Safari** (Chrome on iOS cannot install PWAs to the home screen).
+2. Tap the **Share** button.
+3. Tap **Add to Home Screen**.
+4. Tap **Add**.
+
+The app opens full-screen like a native app, works offline after the first visit, and keeps the rest timer accurate when you switch apps briefly.
+
+### iPhone and iPad tips
+
+- Use **Settings → Google Sheets Setup** in the app to paste your sync URL.
+- During a workout, start the rest timer to keep the screen awake on supported devices.
+- On iPad, rotate freely — the layout adapts in portrait and landscape.
+- If sync fails, confirm the Google Apps Script web app is deployed with access set to **Anyone with the link**.
+
 ## Install on Android (browser PWA)
 
 For a true installable PWA, host it on HTTPS, such as GitHub Pages.
