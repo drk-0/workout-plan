@@ -6,14 +6,27 @@
   <title>Workout Plan</title>
   <meta name="theme-color" content="#06111f">
   <meta name="description" content="Dumbbell workout plan with timers, rep counter, dashboard, and Google Sheets sync.">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Workout">
+  <meta name="format-detection" content="telephone=no">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="css/styles.css">
-  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-180.png" sizes="180x180">
+  <link rel="apple-touch-icon" href="icons/icon-192.png" sizes="192x192">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
 </head>
 <body>
+  <div id="ios-install" class="ios-install" hidden>
+    <p><strong>Install on iPhone or iPad:</strong> tap <span class="ios-share">Share</span>, then <strong>Add to Home Screen</strong>.</p>
+    <button type="button" id="ios-install-dismiss" aria-label="Dismiss install instructions">Got it</button>
+  </div>
+
   <main id="app" class="app"></main>
 
-  <nav class="footer">
+  <nav class="footer" aria-label="Main navigation">
     <a href="#/">Home</a>
     <a href="#/workout/A">A</a>
     <a href="#/workout/B">B</a>

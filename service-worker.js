@@ -1,4 +1,4 @@
-const CACHE_NAME = "workout-plan-2-v1";
+const CACHE_NAME = "workout-plan-2-v2";
 const ASSETS = [
   "./",
   "./index.html",
@@ -6,6 +6,7 @@ const ASSETS = [
   "./css/styles.css",
   "./js/app.js",
   "./js/exercises.js",
+  "./icons/icon-180.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./assets/exercises/goblet-squat.png",
