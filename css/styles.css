@@ -123,6 +123,7 @@ input,textarea{width:100%;border:1px solid #cfd8e5;border-radius:12px;padding:13
 .set-tracking{margin:12px 0}
 .set-tracking .field-label{color:var(--ink)}
 .substitute-modal{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.65);display:flex;align-items:flex-end;padding:12px}
+.substitute-modal.hidden{display:none}
 .substitute-modal .card{margin:0;width:100%;max-height:80vh;overflow:auto}
 .footer{
   position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(5,13,24,.95);border-top:1px solid var(--border);

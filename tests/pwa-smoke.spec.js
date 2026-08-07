@@ -60,6 +60,55 @@ test("pre-workout questions and choices meet contrast requirements", async ({ pa
   assertNoPageErrors();
 });
 
+test("substitute picker can be dismissed without changing exercise", async ({ page }) => {
+  const assertNoPageErrors = failOnPageErrors(page);
+  await page.addInitScript(() => {
+    localStorage.setItem("workoutHistory", JSON.stringify([{
+      id: "session-substitute-test",
+      schemaVersion: 2,
+      template: "A",
+      workout: "Workout A",
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      completedLifts: [],
+      skippedExercises: [],
+      substitutions: [],
+      progressionDecisions: [],
+      sets: [],
+      readiness: {
+        energy: 3,
+        soreness: 2,
+        painToday: "none",
+        recordedAt: new Date().toISOString(),
+        blocked: false,
+        blockReasons: [],
+        suggestedAdjustments: [],
+        acceptedAdjustments: []
+      },
+      warmUp: {
+        completed: true,
+        skipped: false,
+        completedAt: new Date().toISOString()
+      }
+    }]));
+  });
+  await page.goto("/#/lift/goblet-squat");
+
+  const dialog = page.getByRole("dialog", { name: "Choose a substitute" });
+  await expect(dialog).toBeHidden();
+  await page.locator("#set-pain").selectOption("sharp");
+  await page.getByRole("button", { name: "Choose Substitute" }).click();
+  await expect(dialog).toBeVisible();
+
+  await page.getByRole("button", { name: "Back to Goblet Squat (no change)" }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Goblet Squat", level: 1 })).toBeVisible();
+  const substitutions = await page.evaluate(() => JSON.parse(localStorage.getItem("workoutHistory"))[0].substitutions);
+  expect(substitutions).toEqual([]);
+  assertNoPageErrors();
+});
+
 test("@offline reloads and renders after installation", async ({ page, context }) => {
   const assertNoPageErrors = failOnPageErrors(page);
 
@@ -72,7 +121,7 @@ test("@offline reloads and renders after installation", async ({ page, context }
         navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true });
       });
     }
-    const cache = await caches.open("workout-plan-2-v10");
+    const cache = await caches.open("workout-plan-2-v11");
     const expected = [
       "js/health-integration.js",
       "js/health-connect.js",
