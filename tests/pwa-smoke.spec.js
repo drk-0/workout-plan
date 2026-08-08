@@ -230,7 +230,7 @@ test("@offline reloads and renders after installation", async ({ page, context }
         navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true });
       });
     }
-    const cache = await caches.open("workout-plan-2-v14");
+    const cache = await caches.open("workout-plan-2-v15");
     const expected = [
       "js/health-integration.js",
       "js/health-connect.js",

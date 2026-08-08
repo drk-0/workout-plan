@@ -69,16 +69,17 @@ export const EXERCISES = [
   },
   {
     workout: "B",
-    slug: "one-arm-row",
-    name: "One-Arm Row",
-    subtitle: "Back + biceps",
-    sets: "3 × 12–15/arm",
+    slug: "dumbbell-pullover",
+    name: "Dumbbell Pullover",
+    subtitle: "Lats + chest",
+    sets: "3 × 10–15",
     rest: 75,
-    progression: { type: "reps_per_side", sets: 3, repMin: 12, repMax: 15, usesDumbbells: true },
-    substitutes: [{ slug: "chest-supported-row", label: "Chest-Supported Row", reason: "More back support, less core demand" }],
-    instructions: "Place one hand on a chair or couch. Keep your back flat and row the dumbbell toward your hip.",
-    cues: ["Pull toward hip", "Do not twist", "Pause at the top", "Lower fully"],
-    video: "https://www.youtube.com/results?search_query=one+arm+dumbbell+row"
+    progression: { type: "reps", sets: 3, repMin: 10, repMax: 15, usesDumbbells: true },
+    substitutes: [{ slug: "one-arm-row", label: "One-Arm Row", reason: "Use if the pullover is uncomfortable on your shoulders" }],
+    imageSlug: "one-arm-row",
+    instructions: "Lie on the floor or a stable bench. Hold one dumbbell with both hands above your chest. With elbows slightly bent, lower it behind your head only as far as your shoulders feel comfortable, then pull it back over your chest.",
+    cues: ["Keep ribs down", "Use a comfortable shoulder range", "Keep elbows softly bent", "Move slowly without arching your back"],
+    video: "https://www.youtube.com/results?search_query=dumbbell+pullover+proper+form"
   },
   {
     workout: "B",
@@ -88,7 +89,7 @@ export const EXERCISES = [
     sets: "3 × 12–15",
     rest: 75,
     progression: { type: "reps", sets: 3, repMin: 12, repMax: 15, usesDumbbells: true },
-    substitutes: [{ slug: "one-arm-row", label: "One-Arm Row", reason: "Lighter weight, supported by chair" }],
+    substitutes: [{ slug: "one-arm-row", label: "One-Arm Row", reason: "Unilateral option supported by a chair" }],
     instructions: "Lie chest-down on a sturdy inclined surface. Row dumbbells up toward your lower chest or ribs.",
     cues: ["Chest stays supported", "Squeeze shoulder blades", "Do not shrug", "Lower with control"],
     video: "https://www.youtube.com/results?search_query=chest+supported+dumbbell+row"
@@ -131,6 +132,19 @@ export const EXERCISES = [
     instructions: "Hold one dumbbell overhead with both hands. Lower behind your head by bending your elbows, then extend back up.",
     cues: ["Elbows mostly forward", "Get a full stretch", "Do not arch your back", "Move at the elbows"],
     video: "https://www.youtube.com/results?search_query=dumbbell+overhead+tricep+extension"
+  },
+  {
+    workout: "sub",
+    slug: "one-arm-row",
+    name: "One-Arm Row",
+    subtitle: "Back + biceps (substitute)",
+    sets: "3 × 12–15/arm",
+    rest: 75,
+    progression: { type: "reps_per_side", sets: 3, repMin: 12, repMax: 15, usesDumbbells: true },
+    imageSlug: "one-arm-row",
+    instructions: "Place one hand on a chair or couch. Keep your back flat and row the dumbbell toward your hip.",
+    cues: ["Pull toward hip", "Do not twist", "Pause at the top", "Lower fully"],
+    video: "https://www.youtube.com/results?search_query=one+arm+dumbbell+row"
   },
   {
     workout: "sub",
