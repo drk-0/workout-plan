@@ -85,10 +85,20 @@ import {
   skipExerciseInSession,
   updateSession
 } from "./workout-data.js";
+import { escapeHTML, setSafeHTML } from "./safe-html.js";
+import { csvCell } from "./spreadsheet-security.js";
+import {
+  APP_STORAGE_KEYS,
+  createDataBackup,
+  migrateLegacyStorage,
+  requestPersistentStorage,
+  restoreDataBackup
+} from "./storage.js";
 
-const SHEETS_URL_KEY = "googleSheetsWebAppUrl";
+const SHEETS_URL_KEY = APP_STORAGE_KEYS.sheetsUrl;
+const SHEETS_TOKEN_KEY = APP_STORAGE_KEYS.sheetsToken;
 const DEFAULT_SHEETS_URL = "PASTE_YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE";
-const IOS_INSTALL_DISMISS_KEY = "iosInstallDismissed";
+const IOS_INSTALL_DISMISS_KEY = APP_STORAGE_KEYS.iosInstallDismissed;
 
 let timerIntervals = {};
 let wakeLock = null;
@@ -97,6 +107,14 @@ let wakeLockOperation = Promise.resolve();
 
 function qs(sel){return document.querySelector(sel)}
 function fmt(s){s=Math.max(0,Number(s)||0);return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`}
+function isValidSheetsUrl(value){
+  try{
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "script.google.com" && url.pathname.startsWith("/macros/s/");
+  }catch{
+    return false;
+  }
+}
 function loadSessions(){
   try{
     const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
@@ -254,24 +272,26 @@ function setRoute(hash){
   const app = qs("#app");
   const route = (hash || "#/").replace(/^#\/?/,"");
   const parts = route.split("/").filter(Boolean);
-  if(parts.length===0) app.innerHTML = home();
-  else if(parts[0]==="readiness") app.innerHTML = readiness(parts[1] || "A");
-  else if(parts[0]==="warmup") app.innerHTML = warmUp(parts[1] || "A");
-  else if(parts[0]==="recovery") app.innerHTML = recovery();
-  else if(parts[0]==="workout") app.innerHTML = workout(parts[1] || "A");
+  let pageHtml;
+  if(parts.length===0) pageHtml = home();
+  else if(parts[0]==="readiness") pageHtml = readiness(parts[1] || "A");
+  else if(parts[0]==="warmup") pageHtml = warmUp(parts[1] || "A");
+  else if(parts[0]==="recovery") pageHtml = recovery();
+  else if(parts[0]==="workout") pageHtml = workout(parts[1] || "A");
   else if(parts[0]==="lift"){
     if(parts[1] && exercise(parts[1])) {
       const originalSlug = parts[2] === "for" && exercise(parts[3]) ? parts[3] : null;
-      app.innerHTML = lift(parts[1], originalSlug);
+      pageHtml = lift(parts[1], originalSlug);
     }
     else{
       location.replace("#/");
       return;
     }
   }
-  else if(parts[0]==="dashboard") app.innerHTML = dashboard();
-  else if(parts[0]==="settings") app.innerHTML = settings();
-  else app.innerHTML = home();
+  else if(parts[0]==="dashboard") pageHtml = dashboard();
+  else if(parts[0]==="settings") pageHtml = settings();
+  else pageHtml = home();
+  setSafeHTML(app, pageHtml);
   bindPage();
   window.scrollTo(0,0);
 }
@@ -622,7 +642,7 @@ function lift(slug, originalSlug = null){
         </div>
       </div>
       <input class="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Weight used, e.g. 20" value="${defaultWeight}">
-      <textarea class="notes" placeholder="Optional note for this set">${lastSet?.notes || ""}</textarea>
+      <textarea class="notes" placeholder="Optional note for this set">${escapeHTML(lastSet?.notes || "")}</textarea>
       ${setTracking}
       <button class="set-complete">Save ${timedExercise?"Timed ":""}Set</button>
     </div>
@@ -907,6 +927,7 @@ let dashboardLiftSelection = null;
 
 function settings(){
   const url = localStorage.getItem(SHEETS_URL_KEY) || DEFAULT_SHEETS_URL;
+  const syncToken = localStorage.getItem(SHEETS_TOKEN_KEY) || "";
   const progressionState = loadProgression();
   const weights = progressionState.equipment.availableDumbbellWeights.join(", ");
   const hcRuntime = isHealthConnectRuntime();
@@ -921,7 +942,8 @@ function settings(){
       <button class="btn" id="hc-sync-settings" type="button"${hcRuntime ? "" : " disabled"}>Sync from GE Scale</button>
       <p id="hc-settings-status" class="lede"></p>
     </div>
-    <div class="card"><h2>Google Sheets Web App URL</h2><p>Paste your deployed Google Apps Script Web App URL here.</p><textarea id="sheetsUrl">${url}</textarea><button class="btn" id="saveUrl">Save URL</button></div>
+    <div class="card"><h2>Google Sheets Sync</h2><p>Paste your deployed Apps Script URL and the sync token configured in Script Properties.</p><label class="field-label" for="sheetsUrl">Web App URL</label><textarea id="sheetsUrl">${escapeHTML(url)}</textarea><label class="field-label" for="sheetsToken">Sync token</label><input id="sheetsToken" type="password" autocomplete="off" value="${escapeHTML(syncToken)}"><button class="btn" id="saveUrl">Save Sync Settings</button></div>
+    <div class="card"><h2>Data Backup</h2><p>Workout and body-measurement data stays on this device. Export a backup regularly. Sync credentials are intentionally excluded.</p><button class="secondary-btn" id="backup-export" type="button">Export Backup</button><label class="secondary-btn" for="backup-import">Restore Backup</label><input id="backup-import" type="file" accept="application/json,.json" hidden></div>
     <div class="card"><h2>Available Dumbbells</h2><p>Used only for conservative weight-increase suggestions. Enter weights in pounds, separated by commas.</p><textarea id="dumbbellWeights" placeholder="5, 8, 10, 12, 15, 20, 25, 30">${weights}</textarea><button class="btn" id="saveEquipment">Save Dumbbells</button></div>
   </section>`;
 }
@@ -966,18 +988,18 @@ function bindReadinessForm(){
     const resultHost = qs("#readiness-result");
     if(readiness.blocked){
       savePendingReadiness(template, readiness);
-      resultHost.innerHTML = `${renderSafetyWarning("Do not start this workout", READINESS_BLOCK_MESSAGE, `<p><strong>Reported:</strong> ${readiness.blockReasons.join(", ")}</p><a class="btn" href="#/">Return home</a>`)}`;
+      setSafeHTML(resultHost, renderSafetyWarning("Do not start this workout", READINESS_BLOCK_MESSAGE, `<p><strong>Reported:</strong> ${readiness.blockReasons.join(", ")}</p><a class="btn" href="#/">Return home</a>`));
       return;
     }
 
     savePendingReadiness(template, readiness);
     if(readiness.suggestedAdjustments.length){
-      resultHost.innerHTML = `<div class="panel adjustment-panel">
+      setSafeHTML(resultHost, `<div class="panel adjustment-panel">
         <h2>Suggested adjustments</h2>
         <p>These are suggestions only. Nothing changes unless you choose to follow them.</p>
         <ul>${readiness.suggestedAdjustments.map((item)=>`<li>${item}</li>`).join("")}</ul>
         <button class="btn readiness-continue" data-template="${template}">Continue to warm-up</button>
-      </div>`;
+      </div>`);
       qs(".readiness-continue").onclick = ()=>{
         const updated = { ...readiness, acceptedAdjustments: [...readiness.suggestedAdjustments] };
         savePendingReadiness(template, updated);
@@ -1060,7 +1082,23 @@ function bindPage(){
   bindRecoveryForm();
   const sync = qs("#sync"); if(sync) sync.onclick = syncSheets;
   const csv = qs("#csv"); if(csv) csv.onclick = exportCSV;
-  const saveUrl = qs("#saveUrl"); if(saveUrl) saveUrl.onclick = ()=>{localStorage.setItem(SHEETS_URL_KEY, qs("#sheetsUrl").value.trim()); alert("Saved.");};
+  const saveUrl = qs("#saveUrl"); if(saveUrl) saveUrl.onclick = ()=>{
+    const url = qs("#sheetsUrl").value.trim();
+    if(!isValidSheetsUrl(url)){
+      alert("Enter a valid HTTPS Apps Script Web App URL from script.google.com.");
+      return;
+    }
+    const syncToken = qs("#sheetsToken").value.trim();
+    if(syncToken.length < 24){
+      alert("Use a sync token with at least 24 characters.");
+      return;
+    }
+    localStorage.setItem(SHEETS_URL_KEY, url);
+    localStorage.setItem(SHEETS_TOKEN_KEY, syncToken);
+    alert("Sync settings saved.");
+  };
+  const backupExport = qs("#backup-export"); if(backupExport) backupExport.onclick = exportBackup;
+  const backupImport = qs("#backup-import"); if(backupImport) backupImport.onchange = importBackup;
   const saveEquipment = qs("#saveEquipment");
   if (saveEquipment) {
     saveEquipment.onclick = () => {
@@ -1572,7 +1610,10 @@ function bindTool(tool){
 async function syncSheets(){
   const status = qs("#status");
   const url = localStorage.getItem(SHEETS_URL_KEY) || DEFAULT_SHEETS_URL;
+  const syncToken = localStorage.getItem(SHEETS_TOKEN_KEY) || "";
   if(!url || url.includes("PASTE_YOUR")){status.textContent="Add your Google Sheets Web App URL in Settings first.";return}
+  if(!isValidSheetsUrl(url)){status.textContent="The saved Google Sheets URL is invalid. Update it in Settings.";return}
+  if(syncToken.length < 24){status.textContent="Add a sync token of at least 24 characters in Settings.";return}
   const sessions = loadSessions();
   const unsynced = flattenSets(sessions).filter(x=>!x.synced);
   if(!unsynced.length){status.textContent="Everything is synced."; return}
@@ -1581,7 +1622,7 @@ async function syncSheets(){
     const response = await fetch(url,{
       method:"POST",
       headers:{"Content-Type":"text/plain;charset=utf-8"},
-      body:JSON.stringify({logs:unsynced})
+      body:JSON.stringify({token:syncToken,logs:unsynced})
     });
     if(!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
@@ -1598,19 +1639,45 @@ async function syncSheets(){
   }
 }
 
+function exportBackup(){
+  const blob = new Blob([createDataBackup()], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `workout-plan-backup-${new Date().toISOString().slice(0,10)}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importBackup(event){
+  const input = event.currentTarget;
+  const file = input.files?.[0];
+  if(!file) return;
+  try{
+    if(!confirm("Restore this backup? Existing workout data in matching sections will be replaced.")) return;
+    const restored = restoreDataBackup(await file.text());
+    alert(`Backup restored (${restored} data sections).`);
+    setRoute("#/settings");
+  }catch(error){
+    alert(`Restore failed: ${error.message}`);
+  }finally{
+    input.value = "";
+  }
+}
+
 function exportCSV(){
   const sessions = loadSessions();
   const flat = flattenSets(sessions);
   const setHeaders=["timestamp","localTime","sessionId","workout","liftName","reps","durationSeconds","weight","volume","notes","synced"];
-  const setRows=[setHeaders.join(",")].concat(flat.map(x=>setHeaders.map(h=>`"${String(x[h]??"").replaceAll('"','""')}"`).join(",")));
+  const setRows=[setHeaders.join(",")].concat(flat.map(x=>setHeaders.map(h=>csvCell(x[h])).join(",")));
 
   const bodyMetrics = loadBodyMetrics();
   const bodyHeaders=["date","weight","bodyFat","waist","source","notes","timestamp"];
-  const bodyRows=[bodyHeaders.join(",")].concat(bodyMetrics.map(x=>bodyHeaders.map(h=>`"${String(x[h]??"").replaceAll('"','""')}"`).join(",")));
+  const bodyRows=[bodyHeaders.join(",")].concat(bodyMetrics.map(x=>bodyHeaders.map(h=>csvCell(x[h])).join(",")));
 
   const glucose = getGlucoseLog(sessions);
   const glucoseHeaders=["date","localTime","workout","glucosePre","glucosePost"];
-  const glucoseRows=[glucoseHeaders.join(",")].concat(glucose.map(x=>glucoseHeaders.map(h=>`"${String(x[h]??"").replaceAll('"','""')}"`).join(",")));
+  const glucoseRows=[glucoseHeaders.join(",")].concat(glucose.map(x=>glucoseHeaders.map(h=>csvCell(x[h])).join(",")));
 
   const content = [
     "Workout Sets",
@@ -1632,7 +1699,9 @@ document.addEventListener("visibilitychange",()=>{
   if(document.visibilityState === "visible") syncWakeLock();
 });
 window.addEventListener("pagehide", releaseWakeLock);
+migrateLegacyStorage();
 persistMigratedSessions();
+requestPersistentStorage();
 setRoute(location.hash);
 showIOSInstallBanner();
 

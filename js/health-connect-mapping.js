@@ -1,6 +1,8 @@
 import { localDateKey } from "./workout-data.js";
 
-export const HEALTH_CONNECT_SYNC_KEY = "healthConnectLastSync";
+import { APP_STORAGE_KEYS } from "./storage.js";
+
+export const HEALTH_CONNECT_SYNC_KEY = APP_STORAGE_KEYS.healthConnectLastSync;
 export const KG_TO_LB = 2.2046226218;
 
 export function kilogramsToPounds(kg) {

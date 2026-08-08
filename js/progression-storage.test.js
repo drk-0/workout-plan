@@ -5,6 +5,8 @@ import {
   acceptSuggestion,
   createProgressionSuggestion,
   dismissSuggestion,
+  STORAGE_VERSION_KEY,
+  TARGETS_KEY,
   migrateProgressionStorage,
   migrateProgressionStorageData,
   SUGGESTION_STATUS,
@@ -146,6 +148,6 @@ test("localStorage migration preserves unrelated workout history key shape", asy
 
   const history = JSON.parse(store.get(HISTORY_KEY));
   assert.equal(history[0].id, "session-1");
-  assert.ok(store.get("storageVersion"));
-  assert.ok(store.get("exerciseTargets"));
+  assert.ok(store.get(STORAGE_VERSION_KEY));
+  assert.ok(store.get(TARGETS_KEY));
 });

@@ -1,5 +1,6 @@
 import { EXERCISES } from "./exercises.js";
 import { getSetsForLift } from "./workout-data.js";
+import { APP_STORAGE_KEYS } from "./storage.js";
 
 function getLastLoggedWeight(sessions, liftSlug) {
   const completed = (sessions || [])
@@ -15,10 +16,10 @@ function getLastLoggedWeight(sessions, liftSlug) {
   return Math.round((total / sets.length) * 10) / 10;
 }
 
-export const STORAGE_VERSION_KEY = "storageVersion";
-export const TARGETS_KEY = "exerciseTargets";
-export const SUGGESTIONS_KEY = "progressionSuggestions";
-export const EQUIPMENT_KEY = "userEquipment";
+export const STORAGE_VERSION_KEY = APP_STORAGE_KEYS.storageVersion;
+export const TARGETS_KEY = APP_STORAGE_KEYS.exerciseTargets;
+export const SUGGESTIONS_KEY = APP_STORAGE_KEYS.progressionSuggestions;
+export const EQUIPMENT_KEY = APP_STORAGE_KEYS.userEquipment;
 
 export const CURRENT_STORAGE_VERSION = 2;
 

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "npm run test:unit && npm run test:browser",
-    "test:unit": "node --test js/workout-data.test.js js/progress.test.js js/progression.test.js js/progression-storage.test.js js/readiness.test.js js/health-connect-mapping.test.js js/exercises.test.js",
+    "test:unit": "node --test js/workout-data.test.js js/progress.test.js js/progression.test.js js/progression-storage.test.js js/readiness.test.js js/health-connect-mapping.test.js js/exercises.test.js js/storage.test.js js/spreadsheet-security.test.js google-apps-script/Code.test.js",
     "test:browser": "playwright test",
     "sync:www": "node scripts/sync-www.js",
     "cap:sync": "npm run sync:www && npx cap sync android",

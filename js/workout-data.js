@@ -1,6 +1,8 @@
-export const HISTORY_KEY = "workoutHistory";
+import { APP_STORAGE_KEYS, storageKey } from "./storage.js";
+
+export const HISTORY_KEY = APP_STORAGE_KEYS.history;
 export const SCHEMA_VERSION = 2;
-export const PENDING_READINESS_PREFIX = "pendingReadiness:";
+export const PENDING_READINESS_PREFIX = storageKey("pendingReadiness:");
 const LEGACY_MAIN_ROW_SLUG = "one-arm-row";
 const REPLACEMENT_MAIN_SLUG = "dumbbell-pullover";
 

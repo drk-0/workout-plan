@@ -1,6 +1,7 @@
 import { flattenSets, localDateKey } from "./workout-data.js";
+import { APP_STORAGE_KEYS } from "./storage.js";
 
-export const BODY_METRICS_KEY = "bodyMetrics";
+export const BODY_METRICS_KEY = APP_STORAGE_KEYS.bodyMetrics;
 
 export function isCompletedWorkout(session) {
   return Boolean(session?.endedAt) || (session?.sets?.length > 0);
