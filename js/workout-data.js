@@ -1,6 +1,8 @@
 export const HISTORY_KEY = "workoutHistory";
 export const SCHEMA_VERSION = 2;
 export const PENDING_READINESS_PREFIX = "pendingReadiness:";
+const LEGACY_MAIN_ROW_SLUG = "one-arm-row";
+const REPLACEMENT_MAIN_SLUG = "dumbbell-pullover";
 
 export function isLegacyLogEntry(entry) {
   return entry && typeof entry.reps === "number" && !Array.isArray(entry.sets);
@@ -192,6 +194,49 @@ export function migrateSessionV2(session) {
     }
     return updated;
   });
+
+  if (migrated.endedAt === null && migrated.template === "B") {
+    const existingSubstitution = [...migrated.substitutions]
+      .reverse()
+      .find(item => item.substituteSlug === LEGACY_MAIN_ROW_SLUG);
+    const plannedSlug = existingSubstitution?.originalSlug || REPLACEMENT_MAIN_SLUG;
+    const hadCompletedRow = migrated.completedLifts?.includes(LEGACY_MAIN_ROW_SLUG);
+    const hadSkippedRow = migrated.skippedExercises.includes(LEGACY_MAIN_ROW_SLUG);
+    const hadRowSets = migrated.sets.some(set =>
+      set.lift === LEGACY_MAIN_ROW_SLUG && !set.substitutedFrom
+    );
+
+    migrated.completedLifts = [...new Set((migrated.completedLifts || []).map(slug =>
+      slug === LEGACY_MAIN_ROW_SLUG ? plannedSlug : slug
+    ))];
+    migrated.skippedExercises = [...new Set(migrated.skippedExercises.map(slug =>
+      slug === LEGACY_MAIN_ROW_SLUG ? plannedSlug : slug
+    ))];
+    migrated.sets = migrated.sets.map(set =>
+      set.lift === LEGACY_MAIN_ROW_SLUG && !set.substitutedFrom
+        ? { ...set, substitutedFrom: plannedSlug }
+        : set
+    );
+
+    if (
+      plannedSlug === REPLACEMENT_MAIN_SLUG &&
+      (hadCompletedRow || hadSkippedRow || hadRowSets) &&
+      !migrated.substitutions.some(item =>
+        item.originalSlug === REPLACEMENT_MAIN_SLUG &&
+        item.substituteSlug === LEGACY_MAIN_ROW_SLUG
+      )
+    ) {
+      migrated.substitutions = [
+        ...migrated.substitutions,
+        {
+          originalSlug: REPLACEMENT_MAIN_SLUG,
+          substituteSlug: LEGACY_MAIN_ROW_SLUG,
+          at: migrated.startedAt || new Date().toISOString(),
+          migrated: true
+        }
+      ];
+    }
+  }
 
   return migrated;
 }
