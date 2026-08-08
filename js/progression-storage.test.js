@@ -27,10 +27,35 @@ test("migrateProgressionStorageData seeds targets and equipment", () => {
     sessions: []
   });
 
-  assert.equal(migrated.version, 2);
+  assert.equal(migrated.version, 3);
   assert.equal(migrated.targets.length, 1);
   assert.equal(migrated.targets[0].exerciseId, "goblet-squat");
   assert.deepEqual(migrated.equipment.availableDumbbellWeights, [5, 8, 10, 12, 15, 20, 25, 30]);
+});
+
+test("version 2 migration seeds targets for newly added exercises", () => {
+  const pullover = {
+    slug: "dumbbell-pullover",
+    progression: { type: "reps", sets: 3, repMin: 10, repMax: 15, usesDumbbells: true }
+  };
+  const migrated = migrateProgressionStorageData({
+    version: 2,
+    targets: [{
+      exerciseId: "one-arm-row",
+      sets: 3,
+      minReps: 12,
+      maxReps: 15,
+      weight: 20,
+      source: TARGET_SOURCES.PLAN
+    }],
+    equipment: { availableDumbbellWeights: [5, 10, 15, 20] },
+    exercises: [pullover],
+    sessions: []
+  });
+
+  assert.equal(migrated.version, 3);
+  assert.ok(migrated.targets.some(target => target.exerciseId === "dumbbell-pullover"));
+  assert.ok(migrated.targets.some(target => target.exerciseId === "one-arm-row"));
 });
 
 test("acceptSuggestion updates target without changing workout history", () => {

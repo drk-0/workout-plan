@@ -6,13 +6,13 @@ function failOnPageErrors(page) {
   return () => expect(errors, "The page emitted JavaScript errors").toEqual([]);
 }
 
-async function seedActiveWorkout(page) {
-  await page.addInitScript(() => {
+async function seedActiveWorkout(page, template = "A") {
+  await page.addInitScript(workoutTemplate => {
     localStorage.setItem("workoutHistory", JSON.stringify([{
       id: "session-browser-test",
       schemaVersion: 2,
-      template: "A",
-      workout: "Workout A",
+      template: workoutTemplate,
+      workout: `Workout ${workoutTemplate}`,
       startedAt: new Date().toISOString(),
       endedAt: null,
       completedLifts: [],
@@ -36,7 +36,7 @@ async function seedActiveWorkout(page) {
         completedAt: new Date().toISOString()
       }
     }]));
-  });
+  }, template);
 }
 
 test("starts and renders primary navigation", async ({ page }) => {
@@ -113,6 +113,34 @@ test("substitute picker can be dismissed without changing exercise", async ({ pa
   assertNoPageErrors();
 });
 
+test("substitute sets complete the planned exercise with attribution", async ({ page }) => {
+  const assertNoPageErrors = failOnPageErrors(page);
+  await seedActiveWorkout(page, "B");
+  await page.goto("/#/lift/dumbbell-pullover");
+
+  await page.locator("#set-pain").selectOption("sharp");
+  await page.getByRole("button", { name: "Choose Substitute" }).click();
+  await page.getByRole("button", { name: /One-Arm Row/ }).click();
+
+  await expect(page.getByRole("heading", { name: "One-Arm Row", level: 1 })).toBeVisible();
+  await expect(page.locator(".target-banner")).toContainText("Substituting for Dumbbell Pullover");
+  for(let rep = 0; rep < 12; rep++){
+    await page.getByRole("button", { name: "Increase reps" }).click();
+  }
+  await page.locator("#set-effort").selectOption("5");
+  await page.locator("#set-pain").selectOption("none");
+  await page.getByRole("button", { name: "Save Set" }).click();
+  await page.getByRole("link", { name: "Next →" }).click();
+
+  const session = await page.evaluate(() => JSON.parse(localStorage.getItem("workoutHistory"))[0]);
+  expect(session.completedLifts).toContain("dumbbell-pullover");
+  expect(session.completedLifts).not.toContain("one-arm-row");
+  expect(session.sets[0].lift).toBe("one-arm-row");
+  expect(session.sets[0].substitutedFrom).toBe("dumbbell-pullover");
+  await expect(page).toHaveURL(/#\/lift\/chest-supported-row$/);
+  assertNoPageErrors();
+});
+
 test("rest timer announces completion and triggers alarm outputs", async ({ page }) => {
   const assertNoPageErrors = failOnPageErrors(page);
   await seedActiveWorkout(page);
@@ -181,6 +209,7 @@ test("timed exercises use a duration timer and save seconds", async ({ page }) =
   await expect(page.getByRole("heading", { name: "Timed Set + Rest Timer" })).toBeVisible();
   await expect(page.locator(".round-status")).toHaveText("Round 1 of 3");
   await expect(page.locator(".counter")).toHaveCount(0);
+  await expect(page.locator(".start")).toBeDisabled();
   await page.getByRole("button", { name: "45 sec" }).click();
   await expect(page.locator(".work-time")).toHaveText("0:45");
   await page.locator("#set-effort").selectOption("5");
@@ -188,6 +217,7 @@ test("timed exercises use a duration timer and save seconds", async ({ page }) =
 
   for(let round = 1; round <= 3; round++){
     await page.getByRole("button", { name: "Start", exact: true }).first().click();
+    await expect(page.locator(".start")).toBeDisabled();
     await page.evaluate(() => {
       const completedAt = Date.now() + 60_000;
       Date.now = () => completedAt;
@@ -205,6 +235,7 @@ test("timed exercises use a duration timer and save seconds", async ({ page }) =
       await expect(page.locator(".rest-timer-status")).toHaveText("Rest complete");
       await expect(page.locator(".round-status")).toContainText(`Round ${round + 1} of 3`);
       await expect(page.getByRole("button", { name: "Start", exact: true }).first()).toBeEnabled();
+      await expect(page.locator(".start")).toBeDisabled();
     }
   }
 
@@ -230,7 +261,7 @@ test("@offline reloads and renders after installation", async ({ page, context }
         navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true });
       });
     }
-    const cache = await caches.open("workout-plan-2-v15");
+    const cache = await caches.open("workout-plan-2-v16");
     const expected = [
       "js/health-integration.js",
       "js/health-connect.js",

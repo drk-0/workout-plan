@@ -134,6 +134,61 @@ test("migrateSessionV2 preserves legacy set fields exactly", () => {
   assert.equal(migrated.readiness.migrated, true);
 });
 
+test("active Workout B migration treats completed One-Arm Row as a Pullover substitute", () => {
+  const active = {
+    id: "active-b",
+    schemaVersion: SCHEMA_VERSION,
+    template: "B",
+    workout: "Workout B",
+    startedAt: "2026-08-07T10:00:00.000Z",
+    endedAt: null,
+    completedLifts: ["one-arm-row"],
+    skippedExercises: [],
+    substitutions: [],
+    progressionDecisions: [],
+    sets: [{
+      id: "row-set",
+      lift: "one-arm-row",
+      liftName: "One-Arm Row",
+      reps: 12,
+      weight: 20,
+      volume: 240
+    }]
+  };
+
+  const migrated = normalizeHistory([active])[0];
+
+  assert.ok(migrated.completedLifts.includes("dumbbell-pullover"));
+  assert.ok(!migrated.completedLifts.includes("one-arm-row"));
+  assert.equal(migrated.sets[0].lift, "one-arm-row");
+  assert.equal(migrated.sets[0].substitutedFrom, "dumbbell-pullover");
+  assert.ok(migrated.substitutions.some(item =>
+    item.originalSlug === "dumbbell-pullover" &&
+    item.substituteSlug === "one-arm-row"
+  ));
+});
+
+test("completed Workout B history keeps original One-Arm Row identity", () => {
+  const completed = {
+    id: "completed-b",
+    schemaVersion: SCHEMA_VERSION,
+    template: "B",
+    workout: "Workout B",
+    startedAt: "2026-08-01T10:00:00.000Z",
+    endedAt: "2026-08-01T11:00:00.000Z",
+    completedLifts: ["one-arm-row"],
+    skippedExercises: [],
+    substitutions: [],
+    progressionDecisions: [],
+    sets: [{ id: "historic-row", lift: "one-arm-row", reps: 12, weight: 20 }]
+  };
+
+  const migrated = normalizeHistory([completed])[0];
+
+  assert.ok(migrated.completedLifts.includes("one-arm-row"));
+  assert.equal(migrated.sets[0].substitutedFrom, undefined);
+});
+
 test("migrateSessionV2 adds defaults without losing sets", () => {
   const legacySession = {
     id: "old-session",

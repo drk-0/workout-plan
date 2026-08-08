@@ -143,16 +143,16 @@ export function migrateProgressionStorageData({
     if (!nextEquipment?.availableDumbbellWeights?.length) {
       nextEquipment = { availableDumbbellWeights: [...DEFAULT_DUMBBELL_WEIGHTS] };
     }
-
-    const byId = new Map(nextTargets.map((t) => [t.exerciseId, t]));
-    for (const ex of exercises) {
-      if (!byId.has(ex.slug)) {
-        byId.set(ex.slug, seedTargetFromExercise(ex, sessions));
-      }
-    }
-    nextTargets = [...byId.values()];
-    nextVersion = 2;
   }
+
+  const byId = new Map(nextTargets.map((t) => [t.exerciseId, t]));
+  for (const ex of exercises) {
+    if (!byId.has(ex.slug)) {
+      byId.set(ex.slug, seedTargetFromExercise(ex, sessions));
+    }
+  }
+  nextTargets = [...byId.values()];
+  nextVersion = Math.max(nextVersion, 3);
 
   return {
     version: nextVersion,

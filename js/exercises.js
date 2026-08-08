@@ -76,7 +76,6 @@ export const EXERCISES = [
     rest: 75,
     progression: { type: "reps", sets: 3, repMin: 10, repMax: 15, usesDumbbells: true },
     substitutes: [{ slug: "one-arm-row", label: "One-Arm Row", reason: "Use if the pullover is uncomfortable on your shoulders" }],
-    imageSlug: "one-arm-row",
     instructions: "Lie on the floor or a stable bench. Hold one dumbbell with both hands above your chest. With elbows slightly bent, lower it behind your head only as far as your shoulders feel comfortable, then pull it back over your chest.",
     cues: ["Keep ribs down", "Use a comfortable shoulder range", "Keep elbows softly bent", "Move slowly without arching your back"],
     video: "https://www.youtube.com/results?search_query=dumbbell+pullover+proper+form"

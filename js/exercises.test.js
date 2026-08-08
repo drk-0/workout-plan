@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { EXERCISES, getWorkoutExercises } from "./exercises.js";
 
 test("Workout B uses Dumbbell Pullover instead of a second main row", () => {
@@ -20,4 +21,6 @@ test("One-Arm Row remains available as a pullover substitute", () => {
   assert.equal(pullover.progression.type, "reps");
   assert.equal(pullover.progression.repMin, 10);
   assert.equal(pullover.progression.repMax, 15);
+  assert.equal(pullover.imageSlug, undefined);
+  assert.ok(existsSync("assets/exercises/dumbbell-pullover.png"));
 });

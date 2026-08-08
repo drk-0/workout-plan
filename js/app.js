@@ -142,6 +142,16 @@ function isTimedExercise(exercise){return exercise?.progression?.type === "time"
 function formatSetResult(set){
   return set.durationSeconds ? `${set.durationSeconds} sec` : `${set.reps} reps`;
 }
+function getSetsForPlannedLift(session, liftSlug){
+  return (session?.sets || []).filter(set =>
+    set.lift === liftSlug || set.substitutedFrom === liftSlug
+  );
+}
+function getActiveSubstitute(session, originalSlug){
+  return [...(session?.substitutions || [])]
+    .reverse()
+    .find(substitution => substitution.originalSlug === originalSlug)?.substituteSlug || null;
+}
 function isIOS(){
   return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
@@ -250,7 +260,10 @@ function setRoute(hash){
   else if(parts[0]==="recovery") app.innerHTML = recovery();
   else if(parts[0]==="workout") app.innerHTML = workout(parts[1] || "A");
   else if(parts[0]==="lift"){
-    if(parts[1] && exercise(parts[1])) app.innerHTML = lift(parts[1]);
+    if(parts[1] && exercise(parts[1])) {
+      const originalSlug = parts[2] === "for" && exercise(parts[3]) ? parts[3] : null;
+      app.innerHTML = lift(parts[1], originalSlug);
+    }
     else{
       location.replace("#/");
       return;
@@ -439,7 +452,8 @@ function workout(letter){
 }
 
 function card(e, session){
-  const setsForLift = getSetsForLift(session, e.slug);
+  const setsForLift = getSetsForPlannedLift(session, e.slug);
+  const substituteSlug = getActiveSubstitute(session, e.slug);
   const done = session.completedLifts.includes(e.slug);
   const skipped = (session.skippedExercises || []).includes(e.slug);
   const status = skipped
@@ -449,7 +463,8 @@ function card(e, session){
       : setsForLift.length
         ? `<span class="lift-status in-progress">${setsForLift.length} set${setsForLift.length===1?"":"s"} logged</span>`
         : `<span class="lift-status">${e.subtitle}</span>`;
-  return `<a class="lift-card${done?" lift-card-done":""}" href="#/lift/${e.slug}">
+  const href = substituteSlug ? `#/lift/${substituteSlug}/for/${e.slug}` : `#/lift/${e.slug}`;
+  return `<a class="lift-card${done?" lift-card-done":""}" href="${href}">
     <img src="${exerciseImage(e)}" alt="${e.name}">
     <div><h3>${e.name}</h3><p>${e.sets}</p>${status}</div>
   </a>`;
@@ -550,13 +565,15 @@ function renderSetCounter(exercise, completedSets = 0){
   </div>`;
 }
 
-function lift(slug){
+function lift(slug, originalSlug = null){
   const e = exercise(slug);
   if(!e){
     location.replace("#/");
     return "";
   }
-  const workoutLetter = e.workout === "sub" ? workoutOf(slug) : e.workout;
+  const originalExercise = originalSlug ? exercise(originalSlug) : null;
+  const plannedExercise = originalExercise || e;
+  const workoutLetter = plannedExercise.workout === "sub" ? workoutOf(plannedExercise.slug) : plannedExercise.workout;
   const session = gateActiveSession(workoutLetter);
   if(!session) return "";
 
@@ -566,20 +583,23 @@ function lift(slug){
     : "";
   const lastSet = savedSets[0];
   const workoutExercises = getWorkoutExercises(workoutLetter);
-  const idx = workoutExercises.findIndex(x=>x.slug===slug);
-  const navExercises = idx >= 0 ? workoutExercises : [...workoutExercises, e];
-  const navIdx = navExercises.findIndex(x=>x.slug===slug);
+  const idx = workoutExercises.findIndex(x=>x.slug===plannedExercise.slug);
+  const navExercises = idx >= 0 ? workoutExercises : [...workoutExercises, plannedExercise];
+  const navIdx = navExercises.findIndex(x=>x.slug===plannedExercise.slug);
   const prev = navExercises[(navIdx-1+navExercises.length)%navExercises.length].slug;
   const next = navExercises[(navIdx+1)%navExercises.length].slug;
   const cues = e.cues.map(c=>`<li>${c}</li>`).join("");
   const progressionState = loadProgression();
-  const target = getExerciseTarget(progressionState, slug, e);
-  const targetBanner = renderTargetBanner(e, persistMigratedSessions(), target);
+  const target = getExerciseTarget(progressionState, plannedExercise.slug, plannedExercise);
+  const performedTarget = getExerciseTarget(progressionState, e.slug, e);
+  const targetBanner = originalExercise
+    ? `<div class="target-banner"><strong>Substituting for ${originalExercise.name}</strong><p class="target-banner-note">This set completes the planned exercise without changing its progression target.</p></div>`
+    : renderTargetBanner(e, persistMigratedSessions(), target);
   const setTracking = renderSetTrackingControls();
   const substituteModal = renderSubstituteModal(e);
   const timedExercise = isTimedExercise(e);
-  const defaultWeight = target?.weight ?? lastSet?.weight ?? "";
-  const backHref = e.workout === "sub" ? `#/workout/${workoutLetter}` : `#/workout/${e.workout}`;
+  const defaultWeight = lastSet?.weight ?? performedTarget?.weight ?? target?.weight ?? "";
+  const backHref = `#/workout/${workoutLetter}`;
   return `<section>
     <div class="topbar"><a href="${backHref}">← Workout ${workoutLetter}</a><span>${e.name}</span></div>
     <div class="art"><img src="${exerciseImage(e)}" alt="${e.name}"></div>
@@ -590,7 +610,7 @@ function lift(slug){
     ${savedSummary}
     <div class="card"><h2>How to do it</h2><p>${e.instructions}</p></div>
     <div class="card"><h2>Form cues</h2><ul>${cues}</ul></div>
-    <div class="card tools" data-lift="${e.slug}" data-rest="${e.rest}" data-session="${session.id}" data-original="${slug}" data-timed="${timedExercise}">
+    <div class="card tools" data-lift="${e.slug}" data-rest="${e.rest}" data-session="${session.id}" data-original="${plannedExercise.slug}" data-is-substitute="${Boolean(originalExercise)}" data-timed="${timedExercise}">
       <h2>${timedExercise?"Timed Set + Rest Timer":"Rep Counter + Rest Timer"}</h2>
       ${renderSetCounter(e, savedSets.length)}
       <div class="timer">
@@ -608,7 +628,7 @@ function lift(slug){
     </div>
     ${substituteModal}
     <a class="video" href="${e.video}" target="_blank" rel="noopener noreferrer">Open video in new tab</a>
-    <div class="action-grid"><a class="secondary-btn" href="#/lift/${prev}">← Previous</a><a class="secondary-btn lift-next" href="#/lift/${next}" data-lift="${e.slug}">Next →</a></div>
+    <div class="action-grid"><a class="secondary-btn" href="#/lift/${prev}">← Previous</a><a class="secondary-btn lift-next" href="#/lift/${next}" data-lift="${plannedExercise.slug}" data-performed-lift="${e.slug}" data-substitute="${Boolean(originalExercise)}">Next →</a></div>
   </section>`;
 }
 
@@ -1062,6 +1082,7 @@ function bindPage(){
   const next = qs(".lift-next");
   if(next) next.addEventListener("click", ()=>{
     const liftSlug = next.dataset.lift;
+    const isSubstitute = next.dataset.substitute === "true";
     const sessionId = tool?.dataset.session;
     if(!liftSlug || !sessionId) return;
     let sessions = loadSessions();
@@ -1069,7 +1090,7 @@ function bindPage(){
     saveSessions(sessions);
 
     const ex = exercise(liftSlug);
-    if (ex) {
+    if (ex && !isSubstitute) {
       let progState = loadProgression();
       const target = getExerciseTarget(progState, liftSlug, ex);
       const built = buildProgressionSuggestion(sessions, ex, {
@@ -1255,11 +1276,22 @@ function bindProgressionDashboard() {
 
 function bindTool(tool){
   const liftSlug = tool.dataset.lift, e = exercise(liftSlug), rest = +tool.dataset.rest;
+  const originalSlug = tool.dataset.original || liftSlug;
+  const isSubstitute = tool.dataset.isSubstitute === "true";
   const sessionId = tool.dataset.session;
   const timedExercise = isTimedExercise(e);
   const rep = tool.querySelector(".repnum");
   const time = tool.querySelector(".rest-time");
   const timerStatus = tool.querySelector(".rest-timer-status");
+  const restStartButton = tool.querySelector(".start");
+  const restPauseButton = tool.querySelector(".pause");
+  const restResetButton = tool.querySelector(".reset");
+  const setRestControlsEnabled=(enabled)=>{
+    if(!timedExercise) return;
+    [restStartButton, restPauseButton, restResetButton].forEach(button => {
+      button.disabled = !enabled;
+    });
+  };
   const painSelect = qs("#set-pain");
   const sharpWarning = qs("#sharp-pain-warning");
   const substituteModal = qs("#substitute-modal");
@@ -1304,6 +1336,7 @@ function bindTool(tool){
       timerStatus.textContent = "Rest complete";
       if(timedExercise && completedRounds < totalRounds){
         workStartButton.disabled = false;
+        setRestControlsEnabled(false);
         updateRoundStatus(`Round ${completedRounds + 1} of ${totalRounds} — ready`);
       }
       triggerTimerAlert();
@@ -1327,9 +1360,9 @@ function bindTool(tool){
     tool.querySelector(".plus").onclick=()=>{reps++; render()};
     tool.querySelector(".minus").onclick=()=>{reps=Math.max(0,reps-1); render()};
   }
-  tool.querySelector(".start").onclick=start;
-  tool.querySelector(".pause").onclick=stop;
-  tool.querySelector(".reset").onclick=()=>{
+  restStartButton.onclick=start;
+  restPauseButton.onclick=stop;
+  restResetButton.onclick=()=>{
     stop();
     stopTimerAlert();
     remaining=rest;
@@ -1370,6 +1403,8 @@ function bindTool(tool){
   };
   const startWork=()=>{
     if(completedRounds >= totalRounds) return;
+    stop();
+    setRestControlsEnabled(false);
     prepareTimerAlert();
     stopTimerAlert();
     stopWork();
@@ -1428,7 +1463,7 @@ function bindTool(tool){
   if(skipBtn){
     skipBtn.onclick = ()=>{
       let sessions = loadSessions();
-      sessions = skipExerciseInSession(sessions, sessionId, liftSlug);
+      sessions = skipExerciseInSession(sessions, sessionId, originalSlug);
       saveSessions(sessions);
       const workoutLetter = e.workout === "sub" ? workoutOf(liftSlug) : e.workout;
       setRoute(`#/workout/${workoutLetter}`);
@@ -1461,7 +1496,7 @@ function bindTool(tool){
       let sessions = loadSessions();
       sessions = addSubstitution(sessions, sessionId, originalSlug, substituteSlug);
       saveSessions(sessions);
-      setRoute(`#/lift/${substituteSlug}`);
+      setRoute(`#/lift/${substituteSlug}/for/${originalSlug}`);
     };
   });
   const saveSetButton = tool.querySelector(".set-complete");
@@ -1493,7 +1528,8 @@ function bindTool(tool){
       weight,
       notes: tool.querySelector(".notes").value || "",
       effort: Number(effort),
-      painDuringSet
+      painDuringSet,
+      substitutedFrom: isSubstitute ? originalSlug : null
     });
     let sessions = loadSessions();
     sessions = addSetToSession(sessions, sessionId, entry);
@@ -1517,6 +1553,7 @@ function bindTool(tool){
     render();
     if(shouldStartRestTimerAfterSet(painDuringSet) && (!timedExercise || completedRounds < totalRounds)){
       if(timedExercise) updateRoundStatus(`Round ${completedRounds} saved — rest before round ${completedRounds + 1}`);
+      setRestControlsEnabled(true);
       remaining = rest; start();
     }
   };
@@ -1525,6 +1562,9 @@ function bindTool(tool){
     saveSetButton.disabled = true;
     saveSetButton.textContent = "All Timed Rounds Saved";
     updateRoundStatus();
+  }
+  if(timedExercise && completedRounds < totalRounds){
+    setRestControlsEnabled(false);
   }
   render();
 }

@@ -1,4 +1,4 @@
-const CACHE_NAME = "workout-plan-2-v15";
+const CACHE_NAME = "workout-plan-2-v16";
 const BASE = new URL(".", self.location).href;
 const ASSET_PATHS = [
   "index.html",
@@ -28,6 +28,7 @@ const ASSET_PATHS = [
   "assets/exercises/overhead-press.png",
   "assets/exercises/reverse-lunge.png",
   "assets/exercises/farmer-carry.png",
+  "assets/exercises/dumbbell-pullover.png",
   "assets/exercises/one-arm-row.png",
   "assets/exercises/chest-supported-row.png",
   "assets/exercises/romanian-deadlift.png",
