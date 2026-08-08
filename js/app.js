@@ -138,6 +138,10 @@ function workoutOf(slug){
   return "A";
 }
 function exercise(slug){return EXERCISES.find(e=>e.slug===slug)}
+function isTimedExercise(exercise){return exercise?.progression?.type === "time"}
+function formatSetResult(set){
+  return set.durationSeconds ? `${set.durationSeconds} sec` : `${set.reps} reps`;
+}
 function isIOS(){
   return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
@@ -515,6 +519,34 @@ function renderSubstituteModal(exercise){
   </div>`;
 }
 
+function renderSetCounter(exercise){
+  if(!isTimedExercise(exercise)){
+    return `<div class="counter">
+      <button class="minus" aria-label="Decrease reps">−</button>
+      <div class="repbox"><span class="repnum">0</span><strong>reps</strong></div>
+      <button class="plus" aria-label="Increase reps">+</button>
+    </div>`;
+  }
+
+  const minimum = exercise.progression.durationMin || 30;
+  const maximum = exercise.progression.durationMax || minimum;
+  const choices = [...new Set([minimum, maximum])];
+  const presets = choices.map((seconds, index)=>
+    `<button type="button" class="duration-preset${index===0?" duration-preset-active":""}" data-seconds="${seconds}" aria-pressed="${index===0}">${seconds} sec</button>`
+  ).join("");
+  return `<div class="exercise-timer" data-duration="${minimum}">
+    <strong>Timed set</strong>
+    <div class="duration-presets" aria-label="Set duration">${presets}</div>
+    <div class="work-time" role="timer">${fmt(minimum)}</div>
+    <p class="exercise-timer-status" role="status" aria-live="assertive"></p>
+    <div class="timer-controls">
+      <button type="button" class="work-start">Start</button>
+      <button type="button" class="work-pause">Pause</button>
+      <button type="button" class="work-reset">Reset</button>
+    </div>
+  </div>`;
+}
+
 function lift(slug){
   const e = exercise(slug);
   if(!e){
@@ -527,7 +559,7 @@ function lift(slug){
 
   const savedSets = getSetsForLift(session, slug);
   const savedSummary = savedSets.length
-    ? `<p class="saved-sets">Saved this session: ${savedSets.map(s=>`${s.reps} reps${s.weight?` @ ${s.weight} lb`:""}${s.effort?` • effort ${s.effort}`:""}${s.painDuringSet && s.painDuringSet!=="none"?` • pain: ${s.painDuringSet}`:""}`).join(" • ")}</p>`
+    ? `<p class="saved-sets">Saved this session: ${savedSets.map(s=>`${formatSetResult(s)}${s.weight?` @ ${s.weight} lb`:""}${s.effort?` • effort ${s.effort}`:""}${s.painDuringSet && s.painDuringSet!=="none"?` • pain: ${s.painDuringSet}`:""}`).join(" • ")}</p>`
     : "";
   const lastSet = savedSets[0];
   const workoutExercises = getWorkoutExercises(workoutLetter);
@@ -542,6 +574,7 @@ function lift(slug){
   const targetBanner = renderTargetBanner(e, persistMigratedSessions(), target);
   const setTracking = renderSetTrackingControls();
   const substituteModal = renderSubstituteModal(e);
+  const timedExercise = isTimedExercise(e);
   const defaultWeight = target?.weight ?? lastSet?.weight ?? "";
   const backHref = e.workout === "sub" ? `#/workout/${workoutLetter}` : `#/workout/${e.workout}`;
   return `<section>
@@ -554,17 +587,13 @@ function lift(slug){
     ${savedSummary}
     <div class="card"><h2>How to do it</h2><p>${e.instructions}</p></div>
     <div class="card"><h2>Form cues</h2><ul>${cues}</ul></div>
-    <div class="card tools" data-lift="${e.slug}" data-rest="${e.rest}" data-session="${session.id}" data-original="${slug}">
-      <h2>Rep Counter + Rest Timer</h2>
-      <div class="counter">
-        <button class="minus">−</button>
-        <div class="repbox"><span class="repnum">0</span><strong>reps</strong></div>
-        <button class="plus">+</button>
-      </div>
+    <div class="card tools" data-lift="${e.slug}" data-rest="${e.rest}" data-session="${session.id}" data-original="${slug}" data-timed="${timedExercise}">
+      <h2>${timedExercise?"Timed Set + Rest Timer":"Rep Counter + Rest Timer"}</h2>
+      ${renderSetCounter(e)}
       <div class="timer">
         <strong>Recommended rest: ${fmt(e.rest)}</strong>
-        <div class="time" role="timer">${fmt(e.rest)}</div>
-        <p class="timer-alert-status" role="status" aria-live="assertive"></p>
+        <div class="time rest-time" role="timer">${fmt(e.rest)}</div>
+        <p class="timer-alert-status rest-timer-status" role="status" aria-live="assertive"></p>
         <div class="timer-controls">
           <button class="start">Start</button><button class="pause">Pause</button><button class="reset">Reset</button>
         </div>
@@ -572,7 +601,7 @@ function lift(slug){
       <input class="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Weight used, e.g. 20" value="${defaultWeight}">
       <textarea class="notes" placeholder="Optional note for this set">${lastSet?.notes || ""}</textarea>
       ${setTracking}
-      <button class="set-complete">Save Set</button>
+      <button class="set-complete">Save ${timedExercise?"Timed ":""}Set</button>
     </div>
     ${substituteModal}
     <a class="video" href="${e.video}" target="_blank" rel="noopener noreferrer">Open video in new tab</a>
@@ -721,7 +750,7 @@ function dashboard(){
         .slice(0, 20)
         .map(
           (set) => `<div class="history-item compact">
-            <b>${set.reps} reps${set.weight ? ` @ ${set.weight} lb` : ""}</b>
+            <b>${formatSetResult(set)}${set.weight ? ` @ ${set.weight} lb` : ""}</b>
             <span>${set.localTime} • ${set.workout}${set.volume ? ` • ${Math.round(set.volume)} lb-reps` : ""}</span>
           </div>`
         )
@@ -764,7 +793,7 @@ function dashboard(){
         .slice(0, 15)
         .map(
           (x) =>
-            `<div class="history-item compact"><b>${x.liftName} — ${x.reps} reps${x.weight ? ` @ ${x.weight} lb` : ""}</b><span>${x.localTime} • ${x.workout} • ${x.synced ? "Synced" : "Not synced"}</span></div>`
+            `<div class="history-item compact"><b>${x.liftName} — ${formatSetResult(x)}${x.weight ? ` @ ${x.weight} lb` : ""}</b><span>${x.localTime} • ${x.workout} • ${x.synced ? "Synced" : "Not synced"}</span></div>`
         )
         .join("")
     : emptyState("No saved sets yet", "Start Workout A or B and log your first set to see progress here.");
@@ -1224,13 +1253,18 @@ function bindProgressionDashboard() {
 function bindTool(tool){
   const liftSlug = tool.dataset.lift, e = exercise(liftSlug), rest = +tool.dataset.rest;
   const sessionId = tool.dataset.session;
-  const rep = tool.querySelector(".repnum"), time = tool.querySelector(".time");
-  const timerStatus = tool.querySelector(".timer-alert-status");
+  const timedExercise = isTimedExercise(e);
+  const rep = tool.querySelector(".repnum");
+  const time = tool.querySelector(".rest-time");
+  const timerStatus = tool.querySelector(".rest-timer-status");
   const painSelect = qs("#set-pain");
   const sharpWarning = qs("#sharp-pain-warning");
   const substituteModal = qs("#substitute-modal");
   let reps = 0, remaining = rest, endAt = null;
-  const render=()=>{rep.textContent=reps; time.textContent=fmt(remaining)};
+  const render=()=>{
+    if(rep) rep.textContent=reps;
+    time.textContent=fmt(remaining);
+  };
   const stop=()=>{
     if(timerIntervals[liftSlug]){
       clearInterval(timerIntervals[liftSlug]);
@@ -1266,8 +1300,10 @@ function bindTool(tool){
     syncWakeLock();
     tick();
   };
-  tool.querySelector(".plus").onclick=()=>{reps++; render()};
-  tool.querySelector(".minus").onclick=()=>{reps=Math.max(0,reps-1); render()};
+  if(rep){
+    tool.querySelector(".plus").onclick=()=>{reps++; render()};
+    tool.querySelector(".minus").onclick=()=>{reps=Math.max(0,reps-1); render()};
+  }
   tool.querySelector(".start").onclick=start;
   tool.querySelector(".pause").onclick=stop;
   tool.querySelector(".reset").onclick=()=>{
@@ -1278,6 +1314,89 @@ function bindTool(tool){
     timerStatus.textContent = "";
     render();
   };
+
+  const workTimer = tool.querySelector(".exercise-timer");
+  const workTime = tool.querySelector(".work-time");
+  const workStatus = tool.querySelector(".exercise-timer-status");
+  let workTarget = +(workTimer?.dataset.duration || 0);
+  let workRemaining = workTarget;
+  let workEndAt = null;
+  let durationCompleted = 0;
+  const workIntervalKey = `${liftSlug}:work`;
+  const renderWork=()=>{
+    if(workTime) workTime.textContent=fmt(workRemaining);
+  };
+  const stopWork=()=>{
+    if(timerIntervals[workIntervalKey]){
+      clearInterval(timerIntervals[workIntervalKey]);
+      delete timerIntervals[workIntervalKey];
+      activeTimers = Math.max(0, activeTimers - 1);
+      syncWakeLock();
+    }
+    workEndAt = null;
+  };
+  const tickWork=()=>{
+    if(workEndAt === null) return;
+    workRemaining = Math.max(0, Math.ceil((workEndAt - Date.now()) / 1000));
+    durationCompleted = Math.max(durationCompleted, workTarget - workRemaining);
+    renderWork();
+    if(workRemaining <= 0){
+      durationCompleted = workTarget;
+      stopWork();
+      workTime.classList.add("timer-complete");
+      workStatus.textContent = "Timed set complete";
+      triggerTimerAlert();
+    }
+  };
+  const startWork=()=>{
+    prepareTimerAlert();
+    stopTimerAlert();
+    stopWork();
+    if(workRemaining<=0){
+      workRemaining=workTarget;
+      durationCompleted=0;
+    }
+    workTime.classList.remove("timer-complete");
+    workStatus.textContent = "";
+    workEndAt = Date.now() + workRemaining * 1000;
+    timerIntervals[workIntervalKey]=setInterval(tickWork, 250);
+    activeTimers++;
+    syncWakeLock();
+    tickWork();
+  };
+  const resetWork=()=>{
+    stopWork();
+    stopTimerAlert();
+    workRemaining=workTarget;
+    durationCompleted=0;
+    workTime?.classList.remove("timer-complete");
+    if(workStatus) workStatus.textContent = "";
+    renderWork();
+  };
+  tool.querySelector(".work-start")?.addEventListener("click", startWork);
+  tool.querySelector(".work-pause")?.addEventListener("click", ()=>{
+    tickWork();
+    stopWork();
+  });
+  tool.querySelector(".work-reset")?.addEventListener("click", resetWork);
+  tool.querySelectorAll(".duration-preset").forEach(button=>{
+    button.onclick=()=>{
+      stopWork();
+      stopTimerAlert();
+      workTarget=+button.dataset.seconds;
+      workRemaining=workTarget;
+      durationCompleted=0;
+      workTimer.dataset.duration=String(workTarget);
+      workTime.classList.remove("timer-complete");
+      workStatus.textContent = "";
+      tool.querySelectorAll(".duration-preset").forEach(option=>{
+        const selected = option === button;
+        option.classList.toggle("duration-preset-active", selected);
+        option.setAttribute("aria-pressed", String(selected));
+      });
+      renderWork();
+    };
+  });
   if(painSelect){
     painSelect.onchange = ()=>{
       const isSharp = painSelect.value === "sharp";
@@ -1325,7 +1444,12 @@ function bindTool(tool){
     };
   });
   tool.querySelector(".set-complete").onclick=()=>{
-    if(reps<=0){alert("Add at least 1 rep before saving this set."); return}
+    if(timedExercise && workEndAt !== null){
+      tickWork();
+      stopWork();
+    }
+    if(timedExercise && durationCompleted<=0){alert("Start the timed set before saving it."); return}
+    if(!timedExercise && reps<=0){alert("Add at least 1 rep before saving this set."); return}
     if(!sessionId){
       alert("Complete the readiness check and warm-up before saving sets.");
       return;
@@ -1343,6 +1467,7 @@ function bindTool(tool){
       lift: liftSlug,
       liftName: e.name,
       reps,
+      durationSeconds: timedExercise ? durationCompleted : null,
       weight,
       notes: tool.querySelector(".notes").value || "",
       effort: Number(effort),
@@ -1355,7 +1480,9 @@ function bindTool(tool){
       painLevel: painDuringSet
     });
     saveSessions(sessions);
-    reps = 0; render();
+    reps = 0;
+    if(timedExercise) resetWork();
+    render();
     if(shouldStartRestTimerAfterSet(painDuringSet)){
       remaining = rest; start();
     }
@@ -1395,7 +1522,7 @@ async function syncSheets(){
 function exportCSV(){
   const sessions = loadSessions();
   const flat = flattenSets(sessions);
-  const setHeaders=["timestamp","localTime","sessionId","workout","liftName","reps","weight","volume","notes","synced"];
+  const setHeaders=["timestamp","localTime","sessionId","workout","liftName","reps","durationSeconds","weight","volume","notes","synced"];
   const setRows=[setHeaders.join(",")].concat(flat.map(x=>setHeaders.map(h=>`"${String(x[h]??"").replaceAll('"','""')}"`).join(",")));
 
   const bodyMetrics = loadBodyMetrics();

@@ -26,6 +26,21 @@ test("volumeForSet multiplies reps and weight", () => {
   assert.equal(volumeForSet(0, 25), 0);
 });
 
+test("createSetEntry preserves timed exercise duration", () => {
+  const entry = createSetEntry({
+    lift: "farmer-carry",
+    liftName: "Farmer Carry",
+    reps: 0,
+    durationSeconds: 45,
+    weight: 20,
+    notes: ""
+  });
+
+  assert.equal(entry.reps, 0);
+  assert.equal(entry.durationSeconds, 45);
+  assert.equal(entry.volume, 0);
+});
+
 test("migrateLegacyLogs groups sets by workout template and local date", () => {
   const legacy = [
     {

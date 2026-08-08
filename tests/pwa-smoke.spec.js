@@ -173,6 +173,33 @@ test("rest timer announces completion and triggers alarm outputs", async ({ page
   assertNoPageErrors();
 });
 
+test("timed exercises use a duration timer and save seconds", async ({ page }) => {
+  const assertNoPageErrors = failOnPageErrors(page);
+  await seedActiveWorkout(page);
+  await page.goto("/#/lift/farmer-carry");
+
+  await expect(page.getByRole("heading", { name: "Timed Set + Rest Timer" })).toBeVisible();
+  await expect(page.locator(".counter")).toHaveCount(0);
+  await page.getByRole("button", { name: "45 sec" }).click();
+  await expect(page.locator(".work-time")).toHaveText("0:45");
+  await page.getByRole("button", { name: "Start", exact: true }).first().click();
+  await page.evaluate(() => {
+    const completedAt = Date.now() + 60_000;
+    Date.now = () => completedAt;
+  });
+
+  await expect(page.locator(".exercise-timer-status")).toHaveText("Timed set complete");
+  await page.locator("#set-effort").selectOption("5");
+  await page.locator("#set-pain").selectOption("none");
+  await page.getByRole("button", { name: "Save Timed Set" }).click();
+
+  const savedSet = await page.evaluate(() => JSON.parse(localStorage.getItem("workoutHistory"))[0].sets[0]);
+  expect(savedSet.lift).toBe("farmer-carry");
+  expect(savedSet.durationSeconds).toBe(45);
+  expect(savedSet.reps).toBe(0);
+  assertNoPageErrors();
+});
+
 test("@offline reloads and renders after installation", async ({ page, context }) => {
   const assertNoPageErrors = failOnPageErrors(page);
 
@@ -185,7 +212,7 @@ test("@offline reloads and renders after installation", async ({ page, context }
         navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true });
       });
     }
-    const cache = await caches.open("workout-plan-2-v12");
+    const cache = await caches.open("workout-plan-2-v13");
     const expected = [
       "js/health-integration.js",
       "js/health-connect.js",

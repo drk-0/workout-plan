@@ -32,6 +32,7 @@ export function createSetEntry({
   lift,
   liftName,
   reps,
+  durationSeconds = null,
   weight,
   notes,
   effort = null,
@@ -57,6 +58,9 @@ export function createSetEntry({
   };
 
   if (effort != null && effort !== "") entry.effort = Number(effort);
+  if (durationSeconds != null && durationSeconds !== "") {
+    entry.durationSeconds = Math.max(0, Math.round(Number(durationSeconds) || 0));
+  }
   const painLevel = normalizePainLevel(painDuringSet);
   if (painLevel) entry.painDuringSet = painLevel;
   if (substitutedFrom) entry.substitutedFrom = substitutedFrom;

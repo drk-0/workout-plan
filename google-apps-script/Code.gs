@@ -9,8 +9,15 @@ function doPost(e) {
     let sheet = ss.getSheetByName(SHEET_NAME);
     if (!sheet) sheet = ss.insertSheet(SHEET_NAME);
 
-    const headers = ["id","timestamp","localTime","sessionId","workout","lift","liftName","reps","weight","volume","notes","trigger","receivedAt"];
-    if (sheet.getLastRow() === 0) sheet.appendRow(headers);
+    const headers = ["id","timestamp","localTime","sessionId","workout","lift","liftName","reps","weight","volume","notes","trigger","receivedAt","durationSeconds"];
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(headers);
+    } else {
+      const existingHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      if (!existingHeaders.includes("durationSeconds")) {
+        sheet.getRange(1, existingHeaders.length + 1).setValue("durationSeconds");
+      }
+    }
 
     const body = JSON.parse(e.postData.contents || "{}");
     const logs = Array.isArray(body.logs) ? body.logs : [];
@@ -39,7 +46,8 @@ function doPost(e) {
       Number(log.volume || 0),
       log.notes || "",
       log.trigger || "",
-      new Date().toISOString()
+      new Date().toISOString(),
+      Number(log.durationSeconds || 0)
     ]);
 
     if (rows.length) {
