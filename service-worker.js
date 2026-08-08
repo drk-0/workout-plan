@@ -1,4 +1,4 @@
-const CACHE_NAME = "workout-plan-2-v9";
+const CACHE_NAME = "workout-plan-2-v11";
 const BASE = new URL(".", self.location).href;
 const ASSET_PATHS = [
   "index.html",

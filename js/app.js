@@ -499,12 +499,12 @@ function renderSubstituteModal(exercise){
   const subs = getSubstitutes(exercise);
   if(!subs.length) return "";
   const options = subs.map((sub)=>`<button type="button" class="secondary-btn substitute-option" data-slug="${sub.slug}" data-original="${exercise.slug}">${sub.label}<br><small>${sub.reason}</small></button>`).join("");
-  return `<div id="substitute-modal" class="substitute-modal hidden" role="dialog" aria-label="Choose substitute">
+  return `<div id="substitute-modal" class="substitute-modal hidden" role="dialog" aria-modal="true" aria-labelledby="substitute-title">
     <div class="card">
-      <h2>Choose a substitute</h2>
+      <h2 id="substitute-title">Choose a substitute</h2>
       <p>Easier options for ${exercise.name}:</p>
       <div class="action-grid">${options}</div>
-      <button type="button" class="secondary-btn close-substitute">Cancel</button>
+      <button type="button" class="btn close-substitute">Back to ${exercise.name} (no change)</button>
     </div>
   </div>`;
 }
@@ -1274,10 +1274,25 @@ function bindTool(tool){
     };
   }
   const chooseSub = qs(".choose-substitute");
+  const closeSubstitute = ()=>{
+    substituteModal?.classList.add("hidden");
+    chooseSub?.focus();
+  };
   if(chooseSub){
-    chooseSub.onclick = ()=> substituteModal?.classList.remove("hidden");
+    chooseSub.onclick = ()=>{
+      substituteModal?.classList.remove("hidden");
+      substituteModal?.querySelector(".close-substitute")?.focus();
+    };
   }
-  qs(".close-substitute")?.addEventListener("click", ()=> substituteModal?.classList.add("hidden"));
+  qs(".close-substitute")?.addEventListener("click", closeSubstitute);
+  if(substituteModal){
+    substituteModal.onclick = event=>{
+      if(event.target === substituteModal) closeSubstitute();
+    };
+    substituteModal.onkeydown = event=>{
+      if(event.key === "Escape") closeSubstitute();
+    };
+  }
   document.querySelectorAll(".substitute-option").forEach((button)=>{
     button.onclick = ()=>{
       const substituteSlug = button.dataset.slug;

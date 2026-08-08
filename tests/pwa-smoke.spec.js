@@ -18,6 +18,97 @@ test("starts and renders primary navigation", async ({ page }) => {
   assertNoPageErrors();
 });
 
+test("pre-workout questions and choices meet contrast requirements", async ({ page }) => {
+  const assertNoPageErrors = failOnPageErrors(page);
+  await page.goto("/#/readiness/A");
+
+  const question = page.locator(".readiness-card .field-label").first();
+  const choice = page.locator(".readiness-card .scale-btn").first();
+  await expect(question).toBeVisible();
+  await expect(choice).toBeVisible();
+
+  for (const locator of [question, choice]) {
+    const contrast = await locator.evaluate(element => {
+      const parse = value => value.match(/\d+(?:\.\d+)?/g).slice(0, 3).map(Number);
+      const opaqueBackground = start => {
+        let current = start;
+        while (current) {
+          const color = getComputedStyle(current).backgroundColor;
+          const channels = color.match(/\d+(?:\.\d+)?/g).map(Number);
+          if (channels.length < 4 || channels[3] > 0) return color;
+          current = current.parentElement;
+        }
+        return "rgb(255, 255, 255)";
+      };
+      const luminance = rgb => {
+        const channels = rgb.map(value => {
+          const normalized = value / 255;
+          return normalized <= 0.04045
+            ? normalized / 12.92
+            : ((normalized + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+      };
+      const style = getComputedStyle(element);
+      const foreground = luminance(parse(style.color));
+      const background = luminance(parse(opaqueBackground(element)));
+      return (Math.max(foreground, background) + 0.05) /
+        (Math.min(foreground, background) + 0.05);
+    });
+    expect(contrast).toBeGreaterThanOrEqual(4.5);
+  }
+  assertNoPageErrors();
+});
+
+test("substitute picker can be dismissed without changing exercise", async ({ page }) => {
+  const assertNoPageErrors = failOnPageErrors(page);
+  await page.addInitScript(() => {
+    localStorage.setItem("workoutHistory", JSON.stringify([{
+      id: "session-substitute-test",
+      schemaVersion: 2,
+      template: "A",
+      workout: "Workout A",
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      completedLifts: [],
+      skippedExercises: [],
+      substitutions: [],
+      progressionDecisions: [],
+      sets: [],
+      readiness: {
+        energy: 3,
+        soreness: 2,
+        painToday: "none",
+        recordedAt: new Date().toISOString(),
+        blocked: false,
+        blockReasons: [],
+        suggestedAdjustments: [],
+        acceptedAdjustments: []
+      },
+      warmUp: {
+        completed: true,
+        skipped: false,
+        completedAt: new Date().toISOString()
+      }
+    }]));
+  });
+  await page.goto("/#/lift/goblet-squat");
+
+  const dialog = page.getByRole("dialog", { name: "Choose a substitute" });
+  await expect(dialog).toBeHidden();
+  await page.locator("#set-pain").selectOption("sharp");
+  await page.getByRole("button", { name: "Choose Substitute" }).click();
+  await expect(dialog).toBeVisible();
+
+  await page.getByRole("button", { name: "Back to Goblet Squat (no change)" }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Goblet Squat", level: 1 })).toBeVisible();
+  const substitutions = await page.evaluate(() => JSON.parse(localStorage.getItem("workoutHistory"))[0].substitutions);
+  expect(substitutions).toEqual([]);
+  assertNoPageErrors();
+});
+
 test("@offline reloads and renders after installation", async ({ page, context }) => {
   const assertNoPageErrors = failOnPageErrors(page);
 
@@ -30,7 +121,7 @@ test("@offline reloads and renders after installation", async ({ page, context }
         navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true });
       });
     }
-    const cache = await caches.open("workout-plan-2-v9");
+    const cache = await caches.open("workout-plan-2-v11");
     const expected = [
       "js/health-integration.js",
       "js/health-connect.js",
