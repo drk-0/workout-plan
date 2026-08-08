@@ -519,7 +519,7 @@ function renderSubstituteModal(exercise){
   </div>`;
 }
 
-function renderSetCounter(exercise){
+function renderSetCounter(exercise, completedSets = 0){
   if(!isTimedExercise(exercise)){
     return `<div class="counter">
       <button class="minus" aria-label="Decrease reps">−</button>
@@ -530,12 +530,15 @@ function renderSetCounter(exercise){
 
   const minimum = exercise.progression.durationMin || 30;
   const maximum = exercise.progression.durationMax || minimum;
+  const totalRounds = exercise.progression.sets || 1;
+  const currentRound = Math.min(completedSets + 1, totalRounds);
   const choices = [...new Set([minimum, maximum])];
   const presets = choices.map((seconds, index)=>
     `<button type="button" class="duration-preset${index===0?" duration-preset-active":""}" data-seconds="${seconds}" aria-pressed="${index===0}">${seconds} sec</button>`
   ).join("");
-  return `<div class="exercise-timer" data-duration="${minimum}">
+  return `<div class="exercise-timer" data-duration="${minimum}" data-total-rounds="${totalRounds}" data-completed-rounds="${completedSets}">
     <strong>Timed set</strong>
+    <p class="round-status">Round ${currentRound} of ${totalRounds}</p>
     <div class="duration-presets" aria-label="Set duration">${presets}</div>
     <div class="work-time" role="timer">${fmt(minimum)}</div>
     <p class="exercise-timer-status" role="status" aria-live="assertive"></p>
@@ -589,7 +592,7 @@ function lift(slug){
     <div class="card"><h2>Form cues</h2><ul>${cues}</ul></div>
     <div class="card tools" data-lift="${e.slug}" data-rest="${e.rest}" data-session="${session.id}" data-original="${slug}" data-timed="${timedExercise}">
       <h2>${timedExercise?"Timed Set + Rest Timer":"Rep Counter + Rest Timer"}</h2>
-      ${renderSetCounter(e)}
+      ${renderSetCounter(e, savedSets.length)}
       <div class="timer">
         <strong>Recommended rest: ${fmt(e.rest)}</strong>
         <div class="time rest-time" role="timer">${fmt(e.rest)}</div>
@@ -1260,6 +1263,21 @@ function bindTool(tool){
   const painSelect = qs("#set-pain");
   const sharpWarning = qs("#sharp-pain-warning");
   const substituteModal = qs("#substitute-modal");
+  const workTimer = tool.querySelector(".exercise-timer");
+  const workTime = tool.querySelector(".work-time");
+  const workStatus = tool.querySelector(".exercise-timer-status");
+  const workStartButton = tool.querySelector(".work-start");
+  const roundStatus = tool.querySelector(".round-status");
+  const totalRounds = +(workTimer?.dataset.totalRounds || 0);
+  let completedRounds = +(workTimer?.dataset.completedRounds || 0);
+  const updateRoundStatus=(message="")=>{
+    if(!roundStatus) return;
+    if(completedRounds >= totalRounds){
+      roundStatus.textContent = `All ${totalRounds} rounds complete`;
+      return;
+    }
+    roundStatus.textContent = message || `Round ${completedRounds + 1} of ${totalRounds}`;
+  };
   let reps = 0, remaining = rest, endAt = null;
   const render=()=>{
     if(rep) rep.textContent=reps;
@@ -1284,6 +1302,10 @@ function bindTool(tool){
       stop();
       time.classList.add("timer-complete");
       timerStatus.textContent = "Rest complete";
+      if(timedExercise && completedRounds < totalRounds){
+        workStartButton.disabled = false;
+        updateRoundStatus(`Round ${completedRounds + 1} of ${totalRounds} — ready`);
+      }
       triggerTimerAlert();
     }
   };
@@ -1294,6 +1316,7 @@ function bindTool(tool){
     if(remaining<=0) remaining=rest;
     time.classList.remove("timer-complete");
     timerStatus.textContent = "";
+    if(timedExercise) workStartButton.disabled = true;
     endAt = Date.now() + remaining * 1000;
     timerIntervals[liftSlug]=setInterval(tick, 250);
     activeTimers++;
@@ -1315,9 +1338,6 @@ function bindTool(tool){
     render();
   };
 
-  const workTimer = tool.querySelector(".exercise-timer");
-  const workTime = tool.querySelector(".work-time");
-  const workStatus = tool.querySelector(".exercise-timer-status");
   let workTarget = +(workTimer?.dataset.duration || 0);
   let workRemaining = workTarget;
   let workEndAt = null;
@@ -1344,11 +1364,12 @@ function bindTool(tool){
       durationCompleted = workTarget;
       stopWork();
       workTime.classList.add("timer-complete");
-      workStatus.textContent = "Timed set complete";
+      workStatus.textContent = `Round ${completedRounds + 1} complete — record effort and save`;
       triggerTimerAlert();
     }
   };
   const startWork=()=>{
+    if(completedRounds >= totalRounds) return;
     prepareTimerAlert();
     stopTimerAlert();
     stopWork();
@@ -1373,7 +1394,7 @@ function bindTool(tool){
     if(workStatus) workStatus.textContent = "";
     renderWork();
   };
-  tool.querySelector(".work-start")?.addEventListener("click", startWork);
+  workStartButton?.addEventListener("click", startWork);
   tool.querySelector(".work-pause")?.addEventListener("click", ()=>{
     tickWork();
     stopWork();
@@ -1443,7 +1464,8 @@ function bindTool(tool){
       setRoute(`#/lift/${substituteSlug}`);
     };
   });
-  tool.querySelector(".set-complete").onclick=()=>{
+  const saveSetButton = tool.querySelector(".set-complete");
+  saveSetButton.onclick=()=>{
     if(timedExercise && workEndAt !== null){
       tickWork();
       stopWork();
@@ -1481,12 +1503,29 @@ function bindTool(tool){
     });
     saveSessions(sessions);
     reps = 0;
-    if(timedExercise) resetWork();
+    if(timedExercise){
+      completedRounds++;
+      workTimer.dataset.completedRounds=String(completedRounds);
+      resetWork();
+      updateRoundStatus();
+      if(completedRounds >= totalRounds){
+        workStartButton.disabled = true;
+        saveSetButton.disabled = true;
+        saveSetButton.textContent = "All Timed Rounds Saved";
+      }
+    }
     render();
-    if(shouldStartRestTimerAfterSet(painDuringSet)){
+    if(shouldStartRestTimerAfterSet(painDuringSet) && (!timedExercise || completedRounds < totalRounds)){
+      if(timedExercise) updateRoundStatus(`Round ${completedRounds} saved — rest before round ${completedRounds + 1}`);
       remaining = rest; start();
     }
   };
+  if(timedExercise && completedRounds >= totalRounds){
+    workStartButton.disabled = true;
+    saveSetButton.disabled = true;
+    saveSetButton.textContent = "All Timed Rounds Saved";
+    updateRoundStatus();
+  }
   render();
 }
 
