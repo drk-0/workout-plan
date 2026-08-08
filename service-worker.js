@@ -1,4 +1,4 @@
-const CACHE_NAME = "workout-plan-2-v11";
+const CACHE_NAME = "workout-plan-2-v14";
 const BASE = new URL(".", self.location).href;
 const ASSET_PATHS = [
   "index.html",
@@ -13,6 +13,7 @@ const ASSET_PATHS = [
   "js/recovery.js",
   "js/safety.js",
   "js/substitutions.js",
+  "js/timer-alert.js",
   "js/warmup.js",
   "js/charts.js",
   "js/exercises.js",
