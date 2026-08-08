@@ -53,6 +53,11 @@ import { WARMUP_STEPS } from "./warmup.js";
 import { normalizeRecovery } from "./recovery.js";
 import { getSubstitutes } from "./substitutions.js";
 import {
+  prepareTimerAlert,
+  stopTimerAlert,
+  triggerTimerAlert
+} from "./timer-alert.js";
+import {
   MEDICAL_DISCLAIMER,
   READINESS_BLOCK_MESSAGE,
   SHARP_PAIN_WARNING,
@@ -118,6 +123,7 @@ function clearAllTimers(){
     delete timerIntervals[key];
   });
   activeTimers = 0;
+  stopTimerAlert();
   releaseWakeLock();
 }
 function img(slug){return `assets/exercises/${slug}.png`}
@@ -557,7 +563,8 @@ function lift(slug){
       </div>
       <div class="timer">
         <strong>Recommended rest: ${fmt(e.rest)}</strong>
-        <div class="time">${fmt(e.rest)}</div>
+        <div class="time" role="timer">${fmt(e.rest)}</div>
+        <p class="timer-alert-status" role="status" aria-live="assertive"></p>
         <div class="timer-controls">
           <button class="start">Start</button><button class="pause">Pause</button><button class="reset">Reset</button>
         </div>
@@ -1218,6 +1225,7 @@ function bindTool(tool){
   const liftSlug = tool.dataset.lift, e = exercise(liftSlug), rest = +tool.dataset.rest;
   const sessionId = tool.dataset.session;
   const rep = tool.querySelector(".repnum"), time = tool.querySelector(".time");
+  const timerStatus = tool.querySelector(".timer-alert-status");
   const painSelect = qs("#set-pain");
   const sharpWarning = qs("#sharp-pain-warning");
   const substituteModal = qs("#substitute-modal");
@@ -1240,12 +1248,18 @@ function bindTool(tool){
       remaining = 0;
       render();
       stop();
-      if(navigator.vibrate) navigator.vibrate([250,120,250]);
+      time.classList.add("timer-complete");
+      timerStatus.textContent = "Rest complete";
+      triggerTimerAlert();
     }
   };
   const start=()=>{
+    prepareTimerAlert();
+    stopTimerAlert();
     stop();
     if(remaining<=0) remaining=rest;
+    time.classList.remove("timer-complete");
+    timerStatus.textContent = "";
     endAt = Date.now() + remaining * 1000;
     timerIntervals[liftSlug]=setInterval(tick, 250);
     activeTimers++;
@@ -1256,7 +1270,14 @@ function bindTool(tool){
   tool.querySelector(".minus").onclick=()=>{reps=Math.max(0,reps-1); render()};
   tool.querySelector(".start").onclick=start;
   tool.querySelector(".pause").onclick=stop;
-  tool.querySelector(".reset").onclick=()=>{stop(); remaining=rest; render()};
+  tool.querySelector(".reset").onclick=()=>{
+    stop();
+    stopTimerAlert();
+    remaining=rest;
+    time.classList.remove("timer-complete");
+    timerStatus.textContent = "";
+    render();
+  };
   if(painSelect){
     painSelect.onchange = ()=>{
       const isSharp = painSelect.value === "sharp";

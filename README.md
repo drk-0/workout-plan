@@ -46,6 +46,7 @@ The app opens full-screen like a native app, works offline after the first visit
 
 - Use **Settings → Google Sheets Setup** in the app to paste your sync URL.
 - During a workout, start the rest timer to keep the screen awake on supported devices.
+- The rest timer sounds three alarm tones at zero. Vibration is used where the browser supports it; Safari on iPhone does not expose web vibration.
 - On iPad, rotate freely — the layout adapts in portrait and landscape.
 - If sync fails, confirm the Google Apps Script web app is deployed with access set to **Anyone with the link**.
 

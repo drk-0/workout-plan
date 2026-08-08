@@ -6,6 +6,39 @@ function failOnPageErrors(page) {
   return () => expect(errors, "The page emitted JavaScript errors").toEqual([]);
 }
 
+async function seedActiveWorkout(page) {
+  await page.addInitScript(() => {
+    localStorage.setItem("workoutHistory", JSON.stringify([{
+      id: "session-browser-test",
+      schemaVersion: 2,
+      template: "A",
+      workout: "Workout A",
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      completedLifts: [],
+      skippedExercises: [],
+      substitutions: [],
+      progressionDecisions: [],
+      sets: [],
+      readiness: {
+        energy: 3,
+        soreness: 2,
+        painToday: "none",
+        recordedAt: new Date().toISOString(),
+        blocked: false,
+        blockReasons: [],
+        suggestedAdjustments: [],
+        acceptedAdjustments: []
+      },
+      warmUp: {
+        completed: true,
+        skipped: false,
+        completedAt: new Date().toISOString()
+      }
+    }]));
+  });
+}
+
 test("starts and renders primary navigation", async ({ page }) => {
   const assertNoPageErrors = failOnPageErrors(page);
 
@@ -62,36 +95,7 @@ test("pre-workout questions and choices meet contrast requirements", async ({ pa
 
 test("substitute picker can be dismissed without changing exercise", async ({ page }) => {
   const assertNoPageErrors = failOnPageErrors(page);
-  await page.addInitScript(() => {
-    localStorage.setItem("workoutHistory", JSON.stringify([{
-      id: "session-substitute-test",
-      schemaVersion: 2,
-      template: "A",
-      workout: "Workout A",
-      startedAt: new Date().toISOString(),
-      endedAt: null,
-      completedLifts: [],
-      skippedExercises: [],
-      substitutions: [],
-      progressionDecisions: [],
-      sets: [],
-      readiness: {
-        energy: 3,
-        soreness: 2,
-        painToday: "none",
-        recordedAt: new Date().toISOString(),
-        blocked: false,
-        blockReasons: [],
-        suggestedAdjustments: [],
-        acceptedAdjustments: []
-      },
-      warmUp: {
-        completed: true,
-        skipped: false,
-        completedAt: new Date().toISOString()
-      }
-    }]));
-  });
+  await seedActiveWorkout(page);
   await page.goto("/#/lift/goblet-squat");
 
   const dialog = page.getByRole("dialog", { name: "Choose a substitute" });
@@ -109,6 +113,66 @@ test("substitute picker can be dismissed without changing exercise", async ({ pa
   assertNoPageErrors();
 });
 
+test("rest timer announces completion and triggers alarm outputs", async ({ page }) => {
+  const assertNoPageErrors = failOnPageErrors(page);
+  await seedActiveWorkout(page);
+  await page.addInitScript(() => {
+    window.__alarmNotes = 0;
+    window.__vibrationPattern = null;
+    class FakeAudioParam {
+      setValueAtTime() {}
+      exponentialRampToValueAtTime() {}
+    }
+    class FakeOscillator {
+      constructor() {
+        this.frequency = new FakeAudioParam();
+      }
+      connect() {}
+      start() { window.__alarmNotes += 1; }
+      stop() {}
+      addEventListener() {}
+    }
+    class FakeGain {
+      constructor() {
+        this.gain = new FakeAudioParam();
+      }
+      connect() {}
+    }
+    class FakeAudioContext {
+      constructor() {
+        this.currentTime = 0;
+        this.destination = {};
+        this.state = "running";
+      }
+      createOscillator() { return new FakeOscillator(); }
+      createGain() { return new FakeGain(); }
+      resume() { return Promise.resolve(); }
+    }
+    window.AudioContext = FakeAudioContext;
+    window.webkitAudioContext = FakeAudioContext;
+    Object.defineProperty(Navigator.prototype, "vibrate", {
+      configurable: true,
+      value(pattern) {
+        window.__vibrationPattern = pattern;
+        return true;
+      }
+    });
+  });
+  await page.goto("/#/lift/goblet-squat");
+
+  await page.getByRole("button", { name: "Start" }).click();
+  await page.evaluate(() => {
+    const completedAt = Date.now() + 180_000;
+    Date.now = () => completedAt;
+  });
+
+  await expect(page.getByRole("status")).toHaveText("Rest complete");
+  await expect(page.locator(".time")).toHaveClass(/timer-complete/);
+  await expect.poll(() => page.evaluate(() => window.__alarmNotes)).toBe(3);
+  expect(await page.evaluate(() => window.__vibrationPattern)).toEqual([400, 150, 400, 150, 700]);
+  assertNoPageErrors();
+});
+
 test("@offline reloads and renders after installation", async ({ page, context }) => {
   const assertNoPageErrors = failOnPageErrors(page);
 
@@ -121,11 +185,12 @@ test("@offline reloads and renders after installation", async ({ page, context }
         navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true });
       });
     }
-    const cache = await caches.open("workout-plan-2-v11");
+    const cache = await caches.open("workout-plan-2-v12");
     const expected = [
       "js/health-integration.js",
       "js/health-connect.js",
-      "js/health-connect-mapping.js"
+      "js/health-connect-mapping.js",
+      "js/timer-alert.js"
     ];
     const cachedUrls = (await cache.keys()).map(request => new URL(request.url).pathname);
     if (!expected.every(path => cachedUrls.some(url => url.endsWith(path)))) {
