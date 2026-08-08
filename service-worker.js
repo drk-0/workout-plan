@@ -6,6 +6,7 @@ const ASSET_PATHS = [
   "css/styles.css",
   "js/app.js",
   "js/safe-html.js",
+  "js/spreadsheet-security.js",
   "js/storage.js",
   "js/workout-data.js",
   "js/progress.js",

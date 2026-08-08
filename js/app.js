@@ -86,6 +86,7 @@ import {
   updateSession
 } from "./workout-data.js";
 import { escapeHTML, setSafeHTML } from "./safe-html.js";
+import { csvCell } from "./spreadsheet-security.js";
 import {
   APP_STORAGE_KEYS,
   createDataBackup,
@@ -1668,15 +1669,15 @@ function exportCSV(){
   const sessions = loadSessions();
   const flat = flattenSets(sessions);
   const setHeaders=["timestamp","localTime","sessionId","workout","liftName","reps","durationSeconds","weight","volume","notes","synced"];
-  const setRows=[setHeaders.join(",")].concat(flat.map(x=>setHeaders.map(h=>`"${String(x[h]??"").replaceAll('"','""')}"`).join(",")));
+  const setRows=[setHeaders.join(",")].concat(flat.map(x=>setHeaders.map(h=>csvCell(x[h])).join(",")));
 
   const bodyMetrics = loadBodyMetrics();
   const bodyHeaders=["date","weight","bodyFat","waist","source","notes","timestamp"];
-  const bodyRows=[bodyHeaders.join(",")].concat(bodyMetrics.map(x=>bodyHeaders.map(h=>`"${String(x[h]??"").replaceAll('"','""')}"`).join(",")));
+  const bodyRows=[bodyHeaders.join(",")].concat(bodyMetrics.map(x=>bodyHeaders.map(h=>csvCell(x[h])).join(",")));
 
   const glucose = getGlucoseLog(sessions);
   const glucoseHeaders=["date","localTime","workout","glucosePre","glucosePost"];
-  const glucoseRows=[glucoseHeaders.join(",")].concat(glucose.map(x=>glucoseHeaders.map(h=>`"${String(x[h]??"").replaceAll('"','""')}"`).join(",")));
+  const glucoseRows=[glucoseHeaders.join(",")].concat(glucose.map(x=>glucoseHeaders.map(h=>csvCell(x[h])).join(",")));
 
   const content = [
     "Workout Sets",

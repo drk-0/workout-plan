@@ -291,6 +291,7 @@ test("@offline reloads and renders after installation", async ({ page, context }
       "js/health-connect-mapping.js",
       "js/timer-alert.js",
       "js/safe-html.js",
+      "js/spreadsheet-security.js",
       "js/storage.js"
     ];
     const cachedUrls = (await cache.keys()).map(request => new URL(request.url).pathname);
