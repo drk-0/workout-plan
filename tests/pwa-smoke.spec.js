@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const HISTORY_STORAGE_KEY = "workoutPlan:workoutHistory";
+
 function failOnPageErrors(page) {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -49,6 +51,27 @@ test("starts and renders primary navigation", async ({ page }) => {
   await expect(page.locator("#ios-install")).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   assertNoPageErrors();
+});
+
+test("stored notes cannot inject executable HTML", async ({ page }) => {
+  await page.addInitScript(metricsKey => {
+    window.__storedXssExecuted = false;
+    localStorage.setItem(metricsKey, JSON.stringify([{
+      id: "metric-xss",
+      date: "2026-08-08",
+      timestamp: new Date().toISOString(),
+      weight: 180,
+      source: "manual",
+      notes: `<img id="xss-payload" src="https://example.invalid/x" onerror="window.__storedXssExecuted=true">`
+    }]));
+  }, "workoutPlan:bodyMetrics");
+
+  await page.goto("/#/dashboard");
+
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  expect(await page.evaluate(() => window.__storedXssExecuted)).toBe(false);
+  await expect(page.locator("#xss-payload")).toHaveCount(0);
+  await expect(page.locator("[onerror]")).toHaveCount(0);
 });
 
 test("pre-workout questions and choices meet contrast requirements", async ({ page }) => {
@@ -108,7 +131,7 @@ test("substitute picker can be dismissed without changing exercise", async ({ pa
 
   await expect(dialog).toBeHidden();
   await expect(page.getByRole("heading", { name: "Goblet Squat", level: 1 })).toBeVisible();
-  const substitutions = await page.evaluate(() => JSON.parse(localStorage.getItem("workoutHistory"))[0].substitutions);
+  const substitutions = await page.evaluate(key => JSON.parse(localStorage.getItem(key))[0].substitutions, HISTORY_STORAGE_KEY);
   expect(substitutions).toEqual([]);
   assertNoPageErrors();
 });
@@ -132,7 +155,7 @@ test("substitute sets complete the planned exercise with attribution", async ({ 
   await page.getByRole("button", { name: "Save Set" }).click();
   await page.getByRole("link", { name: "Next →" }).click();
 
-  const session = await page.evaluate(() => JSON.parse(localStorage.getItem("workoutHistory"))[0]);
+  const session = await page.evaluate(key => JSON.parse(localStorage.getItem(key))[0], HISTORY_STORAGE_KEY);
   expect(session.completedLifts).toContain("dumbbell-pullover");
   expect(session.completedLifts).not.toContain("one-arm-row");
   expect(session.sets[0].lift).toBe("one-arm-row");
@@ -239,7 +262,7 @@ test("timed exercises use a duration timer and save seconds", async ({ page }) =
     }
   }
 
-  const savedSets = await page.evaluate(() => JSON.parse(localStorage.getItem("workoutHistory"))[0].sets);
+  const savedSets = await page.evaluate(key => JSON.parse(localStorage.getItem(key))[0].sets, HISTORY_STORAGE_KEY);
   expect(savedSets).toHaveLength(3);
   expect(savedSets.every(set => set.lift === "farmer-carry")).toBe(true);
   expect(savedSets.every(set => set.durationSeconds === 45)).toBe(true);
@@ -261,12 +284,14 @@ test("@offline reloads and renders after installation", async ({ page, context }
         navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true });
       });
     }
-    const cache = await caches.open("workout-plan-2-v16");
+    const cache = await caches.open("workout-plan-2-v17");
     const expected = [
       "js/health-integration.js",
       "js/health-connect.js",
       "js/health-connect-mapping.js",
-      "js/timer-alert.js"
+      "js/timer-alert.js",
+      "js/safe-html.js",
+      "js/storage.js"
     ];
     const cachedUrls = (await cache.keys()).map(request => new URL(request.url).pathname);
     if (!expected.every(path => cachedUrls.some(url => url.endsWith(path)))) {

@@ -44,7 +44,7 @@ The app opens full-screen like a native app, works offline after the first visit
 
 ### iPhone and iPad tips
 
-- Use **Settings → Google Sheets Setup** in the app to paste your sync URL.
+- Use **Settings → Google Sheets Sync** in the app to paste your sync URL and token.
 - During a workout, start the rest timer to keep the screen awake on supported devices.
 - The rest timer sounds three alarm tones at zero. Vibration is used where the browser supports it; Safari on iPhone does not expose web vibration.
 - On iPad, rotate freely — the layout adapts in portrait and landscape.
@@ -103,7 +103,22 @@ Synced readings appear in **Body Measurements** and the weight trend chart. Data
 5. Execute as: Me.
 6. Access: Anyone with the link.
 7. Copy the Web App URL.
-8. In the Workout Plan app, go to Settings and paste the URL.
+8. In Apps Script, open **Project Settings → Script Properties** and add
+   `WORKOUT_SYNC_TOKEN` with a long random value (a password manager can generate it).
+9. Deploy the script again after updating it.
+10. In the Workout Plan app, go to Settings and paste both the URL and the same token.
+
+The endpoint rejects requests without the token, validates batch sizes and fields, and
+neutralizes spreadsheet formulas in text fields. Treat the token like a password.
+
+## Local data and backups
+
+Workout history and body measurements are stored only in this app's namespaced browser
+storage. The app requests persistent storage where the browser supports it, but browsers
+can still remove local data when an app is uninstalled or site data is cleared.
+
+Use **Settings → Data Backup → Export Backup** regularly. A backup can be restored on
+another device from the same panel. Sync URLs and tokens are not included in backups.
 
 ## GitHub Pages
 
