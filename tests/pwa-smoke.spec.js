@@ -112,6 +112,34 @@ test("starts and renders primary navigation", async ({ page }) => {
   assertNoPageErrors();
 });
 
+test("Apple safe areas and bottom navigation do not cover page controls", async ({ page }) => {
+  await page.goto("/#/settings");
+  const installDismiss = page.locator("#ios-install-dismiss");
+  if(await installDismiss.isVisible()) await installDismiss.click();
+
+  await page.evaluate(() => window.scrollTo(0, 400));
+  const topbar = page.locator(".topbar");
+  await expect(topbar).toBeVisible();
+  const topPosition = await topbar.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    return {
+      top: rect.top,
+      viewportOffset: window.visualViewport?.offsetTop || 0,
+      marginTop: getComputedStyle(element).marginTop
+    };
+  });
+  expect(topPosition.top).toBeGreaterThanOrEqual(topPosition.viewportOffset);
+  expect(topPosition.marginTop).toBe("0px");
+
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const saveEquipment = page.getByRole("button", { name: "Save Dumbbells" });
+  const footer = page.getByRole("navigation", { name: "Main navigation" });
+  const [buttonBox, footerBox] = await Promise.all([saveEquipment.boundingBox(), footer.boundingBox()]);
+  expect(buttonBox).not.toBeNull();
+  expect(footerBox).not.toBeNull();
+  expect(buttonBox.y + buttonBox.height).toBeLessThanOrEqual(footerBox.y);
+});
+
 test("workouts can be selectively edited and deleted", async ({ page }) => {
   const assertNoPageErrors = failOnPageErrors(page);
   await seedWorkoutHistory(page);
@@ -456,7 +484,7 @@ test("@offline reloads and renders after installation", async ({ page, context }
         navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true });
       });
     }
-    const cache = await caches.open("workout-plan-2-v18");
+    const cache = await caches.open("workout-plan-2-v19");
     const expected = [
       "js/health-integration.js",
       "js/health-connect.js",
