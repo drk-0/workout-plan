@@ -357,6 +357,84 @@ export function updateSession(sessions, sessionId, patch) {
   return sessions.map((session) => (session.id === sessionId ? { ...session, ...patch } : session));
 }
 
+function shiftIsoTimestamp(value, deltaMs) {
+  if (!value || !deltaMs) return value;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp + deltaMs).toISOString() : value;
+}
+
+function normalizeEditedSet(raw, original, dateShifted) {
+  const reps = Math.max(0, Math.min(1000, Math.round(Number(raw.reps) || 0)));
+  const weight = Math.max(0, Math.min(5000, Number(raw.weight) || 0));
+  const durationSeconds = raw.durationSeconds == null
+    ? null
+    : Math.max(0, Math.min(86400, Math.round(Number(raw.durationSeconds) || 0)));
+  const effortValue = raw.effort === "" || raw.effort == null ? null : Number(raw.effort);
+  const effort = Number.isFinite(effortValue) ? Math.max(1, Math.min(10, Math.round(effortValue))) : null;
+  const painDuringSet = normalizePainLevel(raw.painDuringSet);
+  const notes = String(raw.notes || "").slice(0, 2000);
+  const changed =
+    reps !== (+original.reps || 0) ||
+    weight !== (+original.weight || 0) ||
+    durationSeconds !== (original.durationSeconds == null ? null : Number(original.durationSeconds)) ||
+    effort !== (original.effort == null ? null : Number(original.effort)) ||
+    painDuringSet !== normalizePainLevel(original.painDuringSet) ||
+    notes !== String(original.notes || "") ||
+    dateShifted;
+  const timestamp = shiftIsoTimestamp(original.timestamp, raw.dateDeltaMs || 0);
+
+  const updated = {
+    ...original,
+    reps,
+    weight,
+    volume: volumeForSet(reps, weight),
+    notes,
+    synced: changed ? false : Boolean(original.synced)
+  };
+  if (timestamp) {
+    updated.timestamp = timestamp;
+    updated.localTime = new Date(timestamp).toLocaleString();
+  }
+  if (durationSeconds == null) delete updated.durationSeconds;
+  else updated.durationSeconds = durationSeconds;
+  if (effort == null) delete updated.effort;
+  else updated.effort = effort;
+  if (!painDuringSet) delete updated.painDuringSet;
+  else updated.painDuringSet = painDuringSet;
+  return updated;
+}
+
+export function editWorkoutSession(sessions, sessionId, { startedAt, sets } = {}) {
+  return sessions.map((session) => {
+    if (session.id !== sessionId) return session;
+    const nextStart = new Date(startedAt);
+    if (!Number.isFinite(nextStart.getTime())) return session;
+
+    const previousStartMs = new Date(session.startedAt).getTime();
+    const deltaMs = Number.isFinite(previousStartMs) ? nextStart.getTime() - previousStartMs : 0;
+    const originals = new Map((session.sets || []).map((set) => [set.id, set]));
+    const requestedSets = Array.isArray(sets) ? sets : session.sets || [];
+    const nextSets = requestedSets
+      .filter((set) => originals.has(set.id))
+      .map((set) => normalizeEditedSet(
+        { ...set, dateDeltaMs: deltaMs },
+        originals.get(set.id),
+        deltaMs !== 0
+      ));
+
+    return {
+      ...session,
+      startedAt: nextStart.toISOString(),
+      endedAt: shiftIsoTimestamp(session.endedAt, deltaMs),
+      sets: nextSets
+    };
+  });
+}
+
+export function deleteWorkoutSession(sessions, sessionId) {
+  return sessions.filter((session) => session.id !== sessionId);
+}
+
 export function setSessionReadiness(sessions, sessionId, readiness) {
   return updateSession(sessions, sessionId, { readiness });
 }

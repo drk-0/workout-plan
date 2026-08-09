@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   APP_STORAGE_KEYS,
+  clearSheetDeleteQueue,
   createDataBackup,
+  loadSheetDeleteQueue,
   migrateLegacyStorage,
+  queueSheetDeletes,
   restoreDataBackup
 } from "./storage.js";
 
@@ -55,4 +58,12 @@ test("restore rejects unknown keys", () => {
     data: { "other-app:key": "[]" }
   });
   assert.throws(() => restoreDataBackup(backup, memoryStorage()), /unsupported data/);
+});
+
+test("Google Sheets deletion queue deduplicates and clears set ids", () => {
+  const storage = memoryStorage();
+  queueSheetDeletes(["set-1", "set-1", "set-2"], storage);
+  assert.deepEqual(loadSheetDeleteQueue(storage), ["set-1", "set-2"]);
+  clearSheetDeleteQueue(storage);
+  assert.deepEqual(loadSheetDeleteQueue(storage), []);
 });
