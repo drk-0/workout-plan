@@ -74,6 +74,8 @@ import {
   completeSession,
   createSessionAfterWarmUp,
   createSetEntry,
+  deleteWorkoutSession,
+  editWorkoutSession,
   flattenSets,
   getActiveSession,
   getSetsForLift,
@@ -89,8 +91,11 @@ import { escapeHTML, setSafeHTML } from "./safe-html.js";
 import { csvCell } from "./spreadsheet-security.js";
 import {
   APP_STORAGE_KEYS,
+  clearSheetDeleteQueue,
   createDataBackup,
+  loadSheetDeleteQueue,
   migrateLegacyStorage,
+  queueSheetDeletes,
   requestPersistentStorage,
   restoreDataBackup
 } from "./storage.js";
@@ -107,6 +112,7 @@ let wakeLockOperation = Promise.resolve();
 
 function qs(sel){return document.querySelector(sel)}
 function fmt(s){s=Math.max(0,Number(s)||0);return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`}
+function decodeRoutePart(value){try{return decodeURIComponent(value || "")}catch{return ""}}
 function isValidSheetsUrl(value){
   try{
     const url = new URL(value);
@@ -289,6 +295,14 @@ function setRoute(hash){
     }
   }
   else if(parts[0]==="dashboard") pageHtml = dashboard();
+  else if(parts[0]==="edit-workout"){
+    const sessionId = decodeRoutePart(parts[1]);
+    if(loadSessions().some(session => session.id === sessionId)) pageHtml = workoutEditor(sessionId);
+    else{
+      location.replace("#/dashboard");
+      return;
+    }
+  }
   else if(parts[0]==="settings") pageHtml = settings();
   else pageHtml = home();
   setSafeHTML(app, pageHtml);
@@ -752,6 +766,83 @@ function renderProgressionDashboard(sessions, progressionState) {
   </div>`;
 }
 
+function toLocalDateTimeValue(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function renderWorkoutHistory(sessions) {
+  if (!sessions.length) return emptyState("No workouts saved yet", "Completed and in-progress workouts will appear here.");
+  return [...sessions]
+    .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt))
+    .map(session => {
+      const date = new Date(session.startedAt);
+      const dateLabel = Number.isFinite(date.getTime()) ? date.toLocaleString() : "Unknown date";
+      const status = session.endedAt ? "Completed" : "In progress";
+      return `<div class="history-item workout-history-item">
+        <div><b>${escapeHTML(session.workout || `Workout ${session.template || ""}`)}</b><span>${escapeHTML(dateLabel)} • ${session.sets.length} sets • ${status}</span></div>
+        <a class="secondary-btn workout-edit-link" href="#/edit-workout/${encodeURIComponent(session.id)}">Edit workout</a>
+      </div>`;
+    })
+    .join("");
+}
+
+function workoutEditor(sessionId) {
+  const session = loadSessions().find(item => item.id === sessionId);
+  if (!session) return "";
+  const setRows = session.sets.length
+    ? session.sets.map((set, index) => {
+        const timed = set.durationSeconds != null;
+        const effortOptions = [`<option value="">Not recorded</option>`]
+          .concat(Array.from({length:10}, (_, optionIndex) => {
+            const value = optionIndex + 1;
+            return `<option value="${value}"${Number(set.effort) === value ? " selected" : ""}>${value}</option>`;
+          }))
+          .join("");
+        const painOptions = [`<option value=""${set.painDuringSet ? "" : " selected"}>Not recorded</option>`].concat(["none", "mild", "moderate", "sharp"]
+          .map(level => `<option value="${level}"${set.painDuringSet === level ? " selected" : ""}>${level.charAt(0).toUpperCase() + level.slice(1)}</option>`)
+        ).join("");
+        return `<fieldset class="workout-set-editor" data-set-id="${escapeHTML(set.id)}">
+          <legend>Set ${index + 1}: ${escapeHTML(set.liftName || set.lift || "Exercise")}</legend>
+          ${timed
+            ? `<label class="field-label">Duration (seconds)<input name="durationSeconds" type="number" min="0" max="86400" inputmode="numeric" value="${Number(set.durationSeconds) || 0}"></label>`
+            : `<label class="field-label">Reps<input name="reps" type="number" min="0" max="1000" inputmode="numeric" value="${Number(set.reps) || 0}"></label>`}
+          <label class="field-label">Weight (lb)<input name="weight" type="number" min="0" max="5000" step="0.1" inputmode="decimal" value="${Number(set.weight) || 0}"></label>
+          <label class="field-label">Effort (1–10)<select name="effort" class="dash-select">${effortOptions}</select></label>
+          <label class="field-label">Pain during set<select name="painDuringSet" class="dash-select">${painOptions}</select></label>
+          <label class="field-label">Notes<textarea name="notes" maxlength="2000">${escapeHTML(set.notes || "")}</textarea></label>
+          <button class="secondary-btn workout-set-remove" type="button">Remove this set</button>
+          <p class="workout-set-removed-note" hidden>This set will be deleted when you save.</p>
+        </fieldset>`;
+      }).join("")
+    : `<p class="panel-note">This workout has no logged sets.</p>`;
+  const hasSyncedSets = session.sets.some(set => set.synced);
+  return `<section class="workout-editor">
+    <div class="topbar"><a href="#/dashboard">← Dashboard</a><span>Edit workout</span></div>
+    <h1>Edit Workout</h1>
+    <p class="lede">${escapeHTML(session.workout)} • ${session.endedAt ? "Completed" : "In progress"}</p>
+    <form id="workout-edit-form" data-session-id="${escapeHTML(session.id)}">
+      <div class="card workout-edit-card">
+        <label class="field-label" for="workout-started-at">Workout date and time</label>
+        <input id="workout-started-at" type="datetime-local" required value="${toLocalDateTimeValue(session.startedAt)}">
+      </div>
+      <div class="workout-set-list">${setRows}</div>
+      <div class="panel">
+        <p class="panel-note">${hasSyncedSets ? "Saved changes and deletions will be sent to Google Sheets on your next sync. Redeploy the latest Apps Script code first." : "Changes affect only this workout and are included in your next Google Sheets sync."}</p>
+        <button class="btn" type="submit">Save changes</button>
+        <a class="secondary-btn" href="#/dashboard">Cancel</a>
+      </div>
+    </form>
+    <div class="panel danger-zone">
+      <h2>Delete this workout</h2>
+      <p>This removes the session and all its sets. Other workouts, measurements, and settings stay intact.</p>
+      <button class="danger-btn workout-delete" type="button" data-session-id="${escapeHTML(session.id)}">Delete workout</button>
+    </div>
+  </section>`;
+}
+
 function formatBodyMetricLine(entry) {
   const parts = [];
   if (entry.weight != null) parts.push(`${entry.weight} lb`);
@@ -845,6 +936,7 @@ function dashboard(){
   const activeLine = active ? `<p class="lede">Active session: ${active.workout} (${active.sets.length} sets logged).</p>` : "";
   const progressionState = loadProgression();
   const progressionPanel = renderProgressionDashboard(sessions, progressionState);
+  const workoutHistory = renderWorkoutHistory(sessions);
 
   return `<section class="dashboard">
     <div class="topbar"><a href="#/">← Home</a><span>Dashboard</span></div>
@@ -857,6 +949,12 @@ function dashboard(){
       <div class="metric"><b>${streak}</b><span>week streak</span></div>
       <div class="metric"><b>${metrics.sessionCount}</b><span>total sessions</span></div>
       <div class="metric"><b>${metrics.setCount}</b><span>saved sets</span></div>
+    </div>
+
+    <div class="panel">
+      <h2>Workout History</h2>
+      <p class="panel-note">Edit a session or delete only the workout data you no longer want.</p>
+      <div class="history-list">${workoutHistory}</div>
     </div>
 
     ${progressionPanel}
@@ -1080,6 +1178,7 @@ function bindPage(){
   bindReadinessForm();
   bindWarmUp();
   bindRecoveryForm();
+  bindWorkoutEditor();
   const sync = qs("#sync"); if(sync) sync.onclick = syncSheets;
   const csv = qs("#csv"); if(csv) csv.onclick = exportCSV;
   const saveUrl = qs("#saveUrl"); if(saveUrl) saveUrl.onclick = ()=>{
@@ -1256,6 +1355,75 @@ function bindDashboard(){
       }
     );
   }
+}
+
+function bindWorkoutEditor(){
+  const form = qs("#workout-edit-form");
+  if(!form) return;
+  const sessionId = form.dataset.sessionId;
+
+  form.querySelectorAll(".workout-set-remove").forEach(button => {
+    button.onclick = () => {
+      const fieldset = button.closest(".workout-set-editor");
+      const removed = fieldset.dataset.removed !== "true";
+      fieldset.dataset.removed = String(removed);
+      fieldset.classList.toggle("workout-set-editor-removed", removed);
+      fieldset.querySelector(".workout-set-removed-note").hidden = !removed;
+      button.textContent = removed ? "Undo removal" : "Remove this set";
+    };
+  });
+
+  form.onsubmit = event => {
+    event.preventDefault();
+    const sessions = loadSessions();
+    const session = sessions.find(item => item.id === sessionId);
+    if(!session) {
+      alert("This workout no longer exists.");
+      setRoute("#/dashboard");
+      return;
+    }
+
+    const rows = [...form.querySelectorAll(".workout-set-editor")];
+    const keptRows = rows.filter(row => row.dataset.removed !== "true");
+    const keptIds = new Set(keptRows.map(row => row.dataset.setId));
+    const removedIds = session.sets.filter(set => !keptIds.has(set.id)).map(set => set.id);
+    const sets = keptRows.map(row => ({
+      id: row.dataset.setId,
+      reps: row.querySelector('[name="reps"]')?.value ?? 0,
+      durationSeconds: row.querySelector('[name="durationSeconds"]')?.value ?? null,
+      weight: row.querySelector('[name="weight"]')?.value ?? 0,
+      effort: row.querySelector('[name="effort"]')?.value ?? "",
+      painDuringSet: row.querySelector('[name="painDuringSet"]')?.value ?? "none",
+      notes: row.querySelector('[name="notes"]')?.value ?? ""
+    }));
+    const startInput = qs("#workout-started-at").value;
+    const startedAt = startInput === toLocalDateTimeValue(session.startedAt)
+      ? new Date(session.startedAt)
+      : new Date(startInput);
+    if(!Number.isFinite(startedAt.getTime())){
+      alert("Enter a valid workout date and time.");
+      return;
+    }
+
+    const updated = editWorkoutSession(sessions, sessionId, {
+      startedAt: startedAt.toISOString(),
+      sets
+    });
+    if(removedIds.length) queueSheetDeletes(removedIds);
+    saveSessions(updated);
+    setRoute("#/dashboard");
+  };
+
+  const deleteButton = qs(".workout-delete");
+  if(deleteButton) deleteButton.onclick = () => {
+    const sessions = loadSessions();
+    const session = sessions.find(item => item.id === sessionId);
+    if(!session) return;
+    if(!confirm(`Delete ${session.workout} from ${new Date(session.startedAt).toLocaleString()}? This cannot be undone.`)) return;
+    queueSheetDeletes(session.sets.map(set => set.id));
+    saveSessions(deleteWorkoutSession(sessions, sessionId));
+    setRoute("#/dashboard");
+  };
 }
 
 function saveLiftFeedbackFromForm(sessions, sessionId, liftSlug) {
@@ -1616,23 +1784,26 @@ async function syncSheets(){
   if(syncToken.length < 24){status.textContent="Add a sync token of at least 24 characters in Settings.";return}
   const sessions = loadSessions();
   const unsynced = flattenSets(sessions).filter(x=>!x.synced);
-  if(!unsynced.length){status.textContent="Everything is synced."; return}
-  status.textContent=`Syncing ${unsynced.length} sets...`;
+  const deletedIds = loadSheetDeleteQueue();
+  if(!unsynced.length && !deletedIds.length){status.textContent="Everything is synced."; return}
+  status.textContent=`Syncing ${unsynced.length} changed sets and ${deletedIds.length} deletions...`;
   try{
     const response = await fetch(url,{
       method:"POST",
       headers:{"Content-Type":"text/plain;charset=utf-8"},
-      body:JSON.stringify({token:syncToken,logs:unsynced})
+      body:JSON.stringify({token:syncToken,logs:unsynced,deletedIds})
     });
     if(!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
     if(!result.ok) throw new Error(result.error || "Sync rejected by server.");
+    if(result.apiVersion !== 2) throw new Error("Update and redeploy the latest Google Apps Script before syncing edits.");
     const ids = unsynced.map(x=>x.id);
     saveSessions(markSetsSynced(sessions, ids));
-    const saved = result.saved ?? unsynced.length;
-    status.textContent=saved===unsynced.length
-      ? `Synced ${saved} sets.`
-      : `Synced ${saved} new sets (${unsynced.length - saved} were already in the sheet).`;
+    clearSheetDeleteQueue();
+    const saved = result.saved ?? 0;
+    const updated = result.updated ?? 0;
+    const deleted = result.deleted ?? 0;
+    status.textContent=`Synced ${saved} new, ${updated} updated, and ${deleted} deleted sets.`;
     setTimeout(()=>setRoute(location.hash),500);
   }catch(e){
     status.textContent=`Sync failed: ${e.message || "Check URL and internet connection."}`;

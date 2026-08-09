@@ -42,6 +42,10 @@ Then on your iPhone or iPad:
 
 The app opens full-screen like a native app, works offline after the first visit, and keeps the rest timer accurate when you switch apps briefly.
 
+Workout sessions can be managed from **Dashboard → Workout History**. Editing a
+synced set marks it for an update, while removed sets and deleted workouts are
+queued for deletion during the next Google Sheets sync.
+
 ### iPhone and iPad tips
 
 - Use **Settings → Google Sheets Sync** in the app to paste your sync URL and token.
@@ -107,6 +111,9 @@ Synced readings appear in **Body Measurements** and the weight trend chart. Data
    `WORKOUT_SYNC_TOKEN` with a long random value (a password manager can generate it).
 9. Deploy the script again after updating it.
 10. In the Workout Plan app, go to Settings and paste both the URL and the same token.
+
+Redeploy `Code.gs` after app updates. The current endpoint supports versioned
+insert, edit, and deletion sync for workout sets.
 
 The endpoint rejects requests without the token, validates batch sizes and fields, and
 neutralizes spreadsheet formulas in text fields. Treat the token like a password.

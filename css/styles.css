@@ -54,6 +54,10 @@ input,textarea{width:100%;border:1px solid #cfd8e5;border-radius:12px;padding:13
 .history-item{background:#fff;color:var(--ink);border-radius:16px;padding:12px;margin:10px 0}.history-item span{color:#667085}
 .history-item.compact{margin:8px 0;padding:10px 12px}
 .history-list{margin-top:8px}
+.workout-history-item{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}.workout-history-item b,.workout-history-item span{display:block}.workout-edit-link{margin:0;padding:10px 13px;background:#0b66c3;color:#fff}
+.workout-edit-card .field-label,.workout-set-editor .field-label{color:var(--ink)}
+.workout-set-list{display:grid;gap:12px}.workout-set-editor{background:#fff;color:var(--ink);border:2px solid #d8e2ee;border-radius:18px;padding:14px;margin:0}.workout-set-editor legend{padding:0 6px;font-weight:1000}.workout-set-editor .secondary-btn{background:#eef6ff;color:#082441;border-color:#9fc4e8}.workout-set-editor-removed{opacity:.62;border-color:#b42318}.workout-set-editor-removed> :not(legend):not(.workout-set-remove):not(.workout-set-removed-note){display:none}.workout-set-removed-note{color:#8b1a1a;font-weight:800}
+.danger-zone{border-color:rgba(255,107,107,.65)}.danger-btn{display:block;width:100%;border:0;border-radius:17px;padding:15px;background:#b42318;color:#fff;font:inherit;font-weight:1000;cursor:pointer;touch-action:manipulation}
 .chart{background:#fff;border-radius:16px;padding:12px;color:#0c1b2e;margin:12px 0}.bar{height:24px;border-radius:999px;background:linear-gradient(90deg,#0b66c3,#34aaf5);margin:6px 0}.bar-row{margin:10px 0}
 .chart-host{background:#fff;border-radius:16px;padding:8px 6px 4px;margin:10px 0 4px;overflow-x:auto}
 .chart-svg{display:block;width:100%;min-width:280px;height:auto}
@@ -151,7 +155,7 @@ input,textarea{width:100%;border:1px solid #cfd8e5;border-radius:12px;padding:13
   .art img{max-height:420px}
 }
 @media(min-width:1100px){.lift-list{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:430px){body{font-size:17px}.lift-card{grid-template-columns:104px 1fr}.lift-card img{width:104px;height:88px}.footer a{font-size:.78rem}.pr-grid{grid-template-columns:1fr}}
+@media(max-width:430px){body{font-size:17px}.lift-card{grid-template-columns:104px 1fr}.lift-card img{width:104px;height:88px}.footer a{font-size:.78rem}.pr-grid{grid-template-columns:1fr}.workout-history-item{grid-template-columns:1fr}.workout-edit-link{width:100%}}
 @media(orientation:landscape) and (max-height:500px){
   .hero-title{font-size:clamp(2rem,12vw,3rem)}
   .counter button{height:54px}

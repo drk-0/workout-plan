@@ -2,6 +2,7 @@ const SHEET_NAME = "Workout Log";
 const SYNC_TOKEN_PROPERTY = "WORKOUT_SYNC_TOKEN";
 const MAX_PAYLOAD_BYTES = 200000;
 const MAX_LOGS_PER_REQUEST = 200;
+const API_VERSION = 2;
 const HEADERS = ["id","timestamp","localTime","sessionId","workout","lift","liftName","reps","weight","volume","notes","trigger","receivedAt","durationSeconds"];
 
 function doPost(e) {
@@ -17,10 +18,12 @@ function doPost(e) {
     if (!constantTimeEqual(body.token, expectedToken)) return jsonResponse({ok:false,error:"Unauthorized."});
 
     const logs = Array.isArray(body.logs) ? body.logs : null;
-    if (!logs || logs.length > MAX_LOGS_PER_REQUEST) {
+    const deletedIds = Array.isArray(body.deletedIds) ? body.deletedIds : null;
+    if (!logs || !deletedIds || logs.length > MAX_LOGS_PER_REQUEST || deletedIds.length > MAX_LOGS_PER_REQUEST) {
       return jsonResponse({ok:false,error:"Invalid log batch."});
     }
     const normalizedLogs = logs.map(normalizeLog);
+    const normalizedDeletedIds = [...new Set(deletedIds.map(id => safeId(id, "deleted id")))];
 
     const lock = LockService.getScriptLock();
     lock.waitLock(30000);
@@ -38,23 +41,33 @@ function doPost(e) {
       }
     }
 
-    const existingIds = new Set();
+    const deleteSet = new Set(normalizedDeletedIds);
+    let deleted = 0;
+    for (let row = sheet.getLastRow(); row >= 2; row--) {
+      const id = String(sheet.getRange(row, 1).getValue() || "");
+      if (deleteSet.has(id)) {
+        sheet.deleteRow(row);
+        deleted++;
+      }
+    }
+
+    const existingRows = new Map();
     const lastRow = sheet.getLastRow();
     if (lastRow > 1) {
       const idValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-      idValues.forEach(row => {
-        if (row[0]) existingIds.add(String(row[0]));
+      idValues.forEach((row, index) => {
+        if (row[0]) existingRows.set(String(row[0]), index + 2);
       });
     }
 
     const requestIds = new Set();
-    const newLogs = normalizedLogs.filter(log => {
-      if (existingIds.has(log.id) || requestIds.has(log.id)) return false;
+    const uniqueLogs = normalizedLogs.filter(log => {
+      if (requestIds.has(log.id)) return false;
       requestIds.add(log.id);
       return true;
     });
 
-    const rows = newLogs.map(log => [
+    const rowForLog = log => [
       log.id,
       log.timestamp,
       log.localTime,
@@ -69,17 +82,32 @@ function doPost(e) {
       log.trigger,
       new Date().toISOString(),
       log.durationSeconds
-    ]);
+    ];
 
-    if (rows.length) {
+    let updated = 0;
+    const newRows = [];
+    uniqueLogs.forEach(log => {
+      const existingRow = existingRows.get(log.id);
+      if (existingRow) {
+        sheet.getRange(existingRow, 1, 1, HEADERS.length).setValues([rowForLog(log)]);
+        updated++;
+      } else {
+        newRows.push(rowForLog(log));
+      }
+    });
+
+    if (newRows.length) {
       const startRow = sheet.getLastRow() + 1;
-      sheet.getRange(startRow, 1, rows.length, HEADERS.length).setValues(rows);
+      sheet.getRange(startRow, 1, newRows.length, HEADERS.length).setValues(newRows);
     }
 
     return jsonResponse({
       ok: true,
-      saved: rows.length,
-      skipped: normalizedLogs.length - newLogs.length
+      apiVersion: API_VERSION,
+      saved: newRows.length,
+      updated: updated,
+      deleted: deleted,
+      skipped: normalizedLogs.length - uniqueLogs.length
     });
     } finally {
       lock.releaseLock();

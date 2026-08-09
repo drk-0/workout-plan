@@ -7,7 +7,11 @@ const source = await readFile(new URL("./Code.gs", import.meta.url), "utf8");
 const context = {};
 vm.createContext(context);
 vm.runInContext(`${source}
-globalThis.testApi = { constantTimeEqual, normalizeLog, safeText };`, context);
+globalThis.testApi = { API_VERSION, constantTimeEqual, normalizeLog, safeText };`, context);
+
+test("workout edit sync uses the current API version", () => {
+  assert.equal(context.testApi.API_VERSION, 2);
+});
 
 test("sync token comparison rejects missing and mismatched values", () => {
   assert.equal(context.testApi.constantTimeEqual("correct", "correct"), true);

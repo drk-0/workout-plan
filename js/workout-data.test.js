@@ -8,6 +8,8 @@ import {
   createSession,
   createSessionAfterWarmUp,
   createSetEntry,
+  deleteWorkoutSession,
+  editWorkoutSession,
   ensureActiveSession,
   flattenSets,
   getActiveSession,
@@ -24,6 +26,65 @@ import { shouldStartRestTimerAfterSet } from "./progression.js";
 test("volumeForSet multiplies reps and weight", () => {
   assert.equal(volumeForSet(12, 20), 240);
   assert.equal(volumeForSet(0, 25), 0);
+});
+
+test("editWorkoutSession updates selected sets and preserves other sessions", () => {
+  const target = createSession("A", "2026-08-01T10:00:00.000Z");
+  target.endedAt = "2026-08-01T11:00:00.000Z";
+  target.sets = [{
+    id: "set-edit",
+    timestamp: "2026-08-01T10:15:00.000Z",
+    localTime: "old",
+    lift: "goblet-squat",
+    liftName: "Goblet Squat",
+    reps: 8,
+    weight: 20,
+    volume: 160,
+    notes: "old",
+    effort: 5,
+    painDuringSet: "none",
+    synced: true
+  }];
+  const other = createSession("B", "2026-08-02T10:00:00.000Z");
+
+  const result = editWorkoutSession([target, other], target.id, {
+    startedAt: "2026-08-03T10:00:00.000Z",
+    sets: [{
+      id: "set-edit",
+      reps: 10,
+      weight: 25,
+      notes: "corrected",
+      effort: 6,
+      painDuringSet: "mild"
+    }]
+  });
+
+  assert.equal(result[0].startedAt, "2026-08-03T10:00:00.000Z");
+  assert.equal(result[0].endedAt, "2026-08-03T11:00:00.000Z");
+  assert.equal(result[0].sets[0].timestamp, "2026-08-03T10:15:00.000Z");
+  assert.equal(result[0].sets[0].reps, 10);
+  assert.equal(result[0].sets[0].weight, 25);
+  assert.equal(result[0].sets[0].volume, 250);
+  assert.equal(result[0].sets[0].synced, false);
+  assert.equal(result[1], other);
+});
+
+test("editWorkoutSession can remove one set and deleteWorkoutSession removes only its target", () => {
+  const first = createSession("A");
+  first.sets = [
+    { id: "keep", reps: 8, weight: 20 },
+    { id: "remove", reps: 10, weight: 20 }
+  ];
+  const second = createSession("B");
+
+  const edited = editWorkoutSession([first, second], first.id, {
+    startedAt: first.startedAt,
+    sets: [{ id: "keep", reps: 9, weight: 20 }]
+  });
+  assert.deepEqual(edited[0].sets.map(set => set.id), ["keep"]);
+
+  const deleted = deleteWorkoutSession(edited, first.id);
+  assert.deepEqual(deleted.map(session => session.id), [second.id]);
 });
 
 test("createSetEntry preserves timed exercise duration", () => {

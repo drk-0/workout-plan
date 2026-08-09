@@ -13,6 +13,7 @@ export const APP_STORAGE_KEYS = Object.freeze({
   userEquipment: storageKey("userEquipment"),
   sheetsUrl: storageKey("googleSheetsWebAppUrl"),
   sheetsToken: storageKey("googleSheetsSyncToken"),
+  sheetDeleteQueue: storageKey("googleSheetsDeleteQueue"),
   iosInstallDismissed: storageKey("iosInstallDismissed"),
   healthConnectLastSync: storageKey("healthConnectLastSync")
 });
@@ -35,7 +36,8 @@ const BACKUP_KEYS = Object.freeze([
   APP_STORAGE_KEYS.storageVersion,
   APP_STORAGE_KEYS.exerciseTargets,
   APP_STORAGE_KEYS.progressionSuggestions,
-  APP_STORAGE_KEYS.userEquipment
+  APP_STORAGE_KEYS.userEquipment,
+  APP_STORAGE_KEYS.sheetDeleteQueue
 ]);
 
 const MAX_BACKUP_BYTES = 2_000_000;
@@ -100,4 +102,26 @@ export function restoreDataBackup(text, storage = globalThis.localStorage) {
 
   for (const [key, value] of Object.entries(backup.data)) storage.setItem(key, value);
   return Object.keys(backup.data).length;
+}
+
+export function loadSheetDeleteQueue(storage = globalThis.localStorage) {
+  try {
+    const value = JSON.parse(storage?.getItem(APP_STORAGE_KEYS.sheetDeleteQueue) || "[]");
+    return Array.isArray(value) ? [...new Set(value.filter(id => typeof id === "string"))] : [];
+  } catch {
+    return [];
+  }
+}
+
+export function queueSheetDeletes(ids, storage = globalThis.localStorage) {
+  const queue = new Set(loadSheetDeleteQueue(storage));
+  for (const id of ids || []) {
+    if (typeof id === "string" && id) queue.add(id);
+  }
+  storage?.setItem(APP_STORAGE_KEYS.sheetDeleteQueue, JSON.stringify([...queue]));
+  return [...queue];
+}
+
+export function clearSheetDeleteQueue(storage = globalThis.localStorage) {
+  storage?.removeItem(APP_STORAGE_KEYS.sheetDeleteQueue);
 }
