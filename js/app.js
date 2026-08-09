@@ -310,6 +310,11 @@ function setRoute(hash){
   window.scrollTo(0,0);
 }
 
+function navigateTo(hash){
+  if(location.hash === hash) setRoute(hash);
+  else location.hash = hash;
+}
+
 function home(){
   const sessions = persistMigratedSessions();
   const active = getActiveSession(sessions);
@@ -1379,7 +1384,7 @@ function bindWorkoutEditor(){
     const session = sessions.find(item => item.id === sessionId);
     if(!session) {
       alert("This workout no longer exists.");
-      setRoute("#/dashboard");
+      navigateTo("#/dashboard");
       return;
     }
 
@@ -1411,7 +1416,7 @@ function bindWorkoutEditor(){
     });
     if(removedIds.length) queueSheetDeletes(removedIds);
     saveSessions(updated);
-    setRoute("#/dashboard");
+    navigateTo("#/dashboard");
   };
 
   const deleteButton = qs(".workout-delete");
@@ -1422,7 +1427,7 @@ function bindWorkoutEditor(){
     if(!confirm(`Delete ${session.workout} from ${new Date(session.startedAt).toLocaleString()}? This cannot be undone.`)) return;
     queueSheetDeletes(session.sets.map(set => set.id));
     saveSessions(deleteWorkoutSession(sessions, sessionId));
-    setRoute("#/dashboard");
+    navigateTo("#/dashboard");
   };
 }
 

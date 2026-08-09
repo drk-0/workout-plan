@@ -165,6 +165,20 @@ test("workouts can be selectively edited and deleted", async ({ page }) => {
 
 test("workout edits and deletions are sent during Sheets sync", async ({ page }) => {
   await page.addInitScript(historyKey => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (url, options) => {
+      if(String(url) === "https://script.google.com/macros/s/browser-test/exec"){
+        window.__syncRequestPayload = JSON.parse(options.body);
+        return new Response(JSON.stringify({
+          ok: true,
+          apiVersion: 2,
+          saved: 0,
+          updated: 1,
+          deleted: 1
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return originalFetch(url, options);
+    };
     localStorage.setItem("workoutPlan:googleSheetsWebAppUrl", "https://script.google.com/macros/s/browser-test/exec");
     localStorage.setItem("workoutPlan:googleSheetsSyncToken", "browser-test-token-at-least-24-characters");
     localStorage.setItem("workoutPlan:googleSheetsDeleteQueue", JSON.stringify(["set-delete"]));
@@ -196,19 +210,11 @@ test("workout edits and deletions are sent during Sheets sync", async ({ page })
     }]));
   }, HISTORY_STORAGE_KEY);
 
-  let requestPayload;
-  await page.route("https://script.google.com/macros/s/browser-test/exec", async route => {
-    requestPayload = route.request().postDataJSON();
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ ok: true, apiVersion: 2, saved: 0, updated: 1, deleted: 1 })
-    });
-  });
   await page.goto("/#/dashboard");
   await page.getByRole("button", { name: "Sync to Google Sheets" }).click();
   await expect(page.locator("#status")).toContainText("1 updated");
 
+  const requestPayload = await page.evaluate(() => window.__syncRequestPayload);
   expect(requestPayload.deletedIds).toEqual(["set-delete"]);
   expect(requestPayload.logs.map(log => log.id)).toEqual(["set-update"]);
   const storage = await page.evaluate(key => ({
